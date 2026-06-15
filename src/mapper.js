@@ -4,6 +4,7 @@
 
 const config = require('./config');
 const { resolveCityId } = require('./atiCities');
+const { getLogistForCompanyId } = require('./logists');
 
 // --------------------------------------------------------------
 // Типы кузова: ключевые слова -> код body_type ATI
@@ -119,6 +120,13 @@ function extractCityName(locationStr) {
 // meta — вспомогательные данные (для логов/отладки)
 // --------------------------------------------------------------
 async function mapLotToAtiBody(lot) {
+  const logist = getLogistForCompanyId(lot.company_id);
+  if (!logist) {
+    throw new Error(
+      `Лот пропущен: company_id=${lot.company_id} не закреплён за логистом с токеном (или в списке пропуска)`
+    );
+  }
+
   const origin = (lot.origins && lot.origins[0]) || null;
   const destination = (lot.destinations && lot.destinations[0]) || null;
 
@@ -208,7 +216,7 @@ async function mapLotToAtiBody(lot) {
         currency_type: config.ati.currencyType,
         rate_without_vat: rate,
       },
-      contacts: [config.ati.contactId],
+      contacts: [logist.contactId],
       boards: [
         {
           id: config.ati.boardId,
@@ -233,6 +241,7 @@ async function mapLotToAtiBody(lot) {
       volume,
       loadIso,
       unloadIso,
+      logist,
     },
   };
 }
