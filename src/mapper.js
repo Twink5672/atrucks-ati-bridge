@@ -198,10 +198,16 @@ async function mapLotToAtiBody(lot) {
           },
         },
       },
-      body_types: bodyTypes,
-      currency_type: config.ati.currencyType,
-      rate: rate,
-      rate_with_vat: rateWithVat,
+      truck: {
+        trucks_count: 1,
+        load_type: 'ftl',
+        body_types: bodyTypes,
+      },
+      payment: {
+        type: 'with-bargaining',
+        currency_type: config.ati.currencyType,
+        rate_without_vat: rate,
+      },
       contacts: [config.ati.contactId],
       boards: [
         {
