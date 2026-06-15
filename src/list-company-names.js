@@ -10,10 +10,8 @@ const config = require('./config');
 const atrucks = require('./atrucksClient');
 
 // URL детальной карточки лота (HTML).
-// Предполагаемый путь по аналогии с основным эндпоинтом:
-// /carrier/auctions/lots/general/quick/{lotId}/
 function detailUrl(lotId) {
-  return `${config.atrucks.baseUrl}/carrier/auctions/lots/general/quick/${lotId}/`;
+  return `${config.atrucks.baseUrl}/carrier/auctions/info/${lotId}/`;
 }
 
 async function fetchLotDetailHtml(lotId) {
