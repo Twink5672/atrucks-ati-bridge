@@ -53,6 +53,7 @@ async function syncOnce() {
         ext_id: extId,
         atrucks_id: lot.id,
         ati_cargo_id: existing.ati_cargo_id,
+        logist_token: existing.logist_token,
         modified: lot.modified,
       });
       continue;
@@ -62,26 +63,45 @@ async function syncOnce() {
     try {
       mapped = await mapLotToAtiBody(lot);
     } catch (err) {
-      stats.errors += 1;
-      log(`ОШИБКА маппинга лота ext_id=${extId} (atrucks_id=${lot.id}): ${err.message}`);
+      if (err.message.startsWith('Лот пропущен:')) {
+        stats.skippedNoLogist = (stats.skippedNoLogist || 0) + 1;
+      } else {
+        stats.errors += 1;
+        log(`ОШИБКА маппинга лота ext_id=${extId} (atrucks_id=${lot.id}): ${err.message}`);
+      }
       continue;
     }
 
+    const newToken = mapped.meta.logist.token;
+    const logistChanged =
+      existing && existing.ati_cargo_id && existing.logist_token !== newToken;
+
     try {
-      if (existing && existing.ati_cargo_id) {
-        // Обновление
-        await ati.updateCargo(existing.ati_cargo_id, mapped.body);
+      if (existing && existing.ati_cargo_id && !logistChanged) {
+        // Обновление тем же логистом
+        await ati.updateCargo(existing.ati_cargo_id, mapped.body, newToken);
         db.upsertMapping({
           ext_id: extId,
           atrucks_id: lot.id,
           ati_cargo_id: existing.ati_cargo_id,
+          logist_token: newToken,
           modified: lot.modified,
         });
         stats.updated += 1;
-        log(`Обновлён груз: ext_id=${extId} -> ati_cargo_id=${existing.ati_cargo_id}`);
+        log(`Обновлён груз: ext_id=${extId} -> ati_cargo_id=${existing.ati_cargo_id} (${mapped.meta.logist.name})`);
       } else {
-        // Создание
-        const { cargoId } = await ati.createCargo(mapped.body);
+        if (logistChanged) {
+          // Логист сменился — снимаем старую карточку старым токеном
+          try {
+            await ati.deleteCargo(existing.ati_cargo_id, existing.logist_token);
+            log(`Логист сменился, снята старая карточка: ext_id=${extId} -> ati_cargo_id=${existing.ati_cargo_id}`);
+          } catch (err) {
+            log(`ОШИБКА снятия старой карточки при смене логиста ext_id=${extId}: ${err.message}`);
+          }
+        }
+
+        // Создание новой карточки
+        const { cargoId } = await ati.createCargo(mapped.body, newToken);
         if (!cargoId) {
           throw new Error('ATI не вернул cargo_id при создании');
         }
@@ -89,10 +109,11 @@ async function syncOnce() {
           ext_id: extId,
           atrucks_id: lot.id,
           ati_cargo_id: cargoId,
+          logist_token: newToken,
           modified: lot.modified,
         });
         stats.created += 1;
-        log(`Создан груз: ext_id=${extId} -> ati_cargo_id=${cargoId}`);
+        log(`Создан груз: ext_id=${extId} -> ati_cargo_id=${cargoId} (${mapped.meta.logist.name})`);
       }
     } catch (err) {
       stats.errors += 1;
@@ -110,7 +131,7 @@ async function syncOnce() {
       continue;
     }
     try {
-      await ati.deleteCargo(row.ati_cargo_id);
+      await ati.deleteCargo(row.ati_cargo_id, row.logist_token);
       db.deleteMapping(row.ext_id);
       stats.deleted += 1;
       log(`Снят с ATI груз: ext_id=${row.ext_id} -> ati_cargo_id=${row.ati_cargo_id}`);
@@ -122,7 +143,8 @@ async function syncOnce() {
 
   log(
     `=== Итоги: всего=${stats.total}, создано=${stats.created}, обновлено=${stats.updated}, ` +
-      `без изменений=${stats.skippedNoChange}, снято=${stats.deleted}, ошибок=${stats.errors} ===`
+      `без изменений=${stats.skippedNoChange}, пропущено(нет логиста)=${stats.skippedNoLogist || 0}, ` +
+      `снято=${stats.deleted}, ошибок=${stats.errors} ===`
   );
 
   return stats;
