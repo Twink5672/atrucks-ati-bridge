@@ -4,12 +4,12 @@
 
 const config = require('./config');
 
-async function createCargo(body) {
+async function createCargo(body, token) {
   const res = await fetch(`${config.ati.apiBase}/v2/cargos`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.ati.token}`,
+      Authorization: `Bearer ${token || config.ati.token}`,
     },
     body: JSON.stringify(body),
   });
@@ -29,12 +29,12 @@ async function createCargo(body) {
   return { cargoId, raw: data };
 }
 
-async function updateCargo(cargoId, body) {
+async function updateCargo(cargoId, body, token) {
   const res = await fetch(`${config.ati.apiBase}/v2/cargos/${cargoId}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.ati.token}`,
+      Authorization: `Bearer ${token || config.ati.token}`,
     },
     body: JSON.stringify(body),
   });
@@ -50,11 +50,11 @@ async function updateCargo(cargoId, body) {
   return { raw: text ? JSON.parse(text) : null };
 }
 
-async function deleteCargo(cargoId) {
+async function deleteCargo(cargoId, token) {
   const res = await fetch(`${config.ati.apiBase}/v2/cargos/${cargoId}`, {
     method: 'DELETE',
     headers: {
-      Authorization: `Bearer ${config.ati.token}`,
+      Authorization: `Bearer ${token || config.ati.token}`,
     },
   });
 
