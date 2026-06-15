@@ -39,16 +39,16 @@ async function resolveCityId(cityName) {
 
   const data = await res.json();
 
-  // Структура ответа может отличаться — берём первый подходящий элемент
-  const suggestions = data.suggestions || data.items || data.results || [];
+  const suggestions = data.suggestions || [];
   if (!Array.isArray(suggestions) || suggestions.length === 0) {
     return null;
   }
 
-  const first = suggestions[0];
-  const cityId = first.city_id || first.id || (first.location && first.location.city_id);
+  // Берём первое предложение, у которого есть city.id
+  const match = suggestions.find((s) => s.city && s.city.id != null);
+  if (!match) return null;
 
-  if (!cityId) return null;
+  const cityId = match.city.id;
 
   db.cacheCityId(cityName, String(cityId));
   return String(cityId);
