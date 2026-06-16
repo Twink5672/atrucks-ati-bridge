@@ -1,10 +1,23 @@
 // ============================================================
-// Основной цикл синхронизации: Atrucks -> ATI
+// Основной цикл синхронизации: Atrucks -> Google Sheets
+//
+// Публикация на ATI больше НЕ происходит автоматически здесь.
+// Этот цикл только поддерживает лист "Лоты Atrucks" в актуальном
+// состоянии (новые лоты, обновлённые цены/маршруты, исчезнувшие
+// лоты — удаляются из таблицы). Реальная публикация на ATI —
+// вручную, кнопкой в Apps Script внутри самой таблицы.
+//
+// Исключение: если лот пропал с Atrucks, а в таблице у него уже
+// стоит ATI_cargo_id (то есть он был опубликован) — карточка на ATI
+// снимается автоматически. Это уборка мусора по уже принятому ранее
+// решению о публикации, а не новая публикация, поэтому ручного
+// подтверждения здесь не требуется.
 // ============================================================
 
 const atrucks = require('./atrucksClient');
 const ati = require('./atiClient');
 const db = require('./db');
+const sheets = require('./sheetsClient');
 const { mapLotToAtiBody } = require('./mapper');
 
 const PILOT_LOGIST_NAME = process.env.PILOT_LOGIST_NAME || null;
@@ -14,9 +27,9 @@ function log(msg) {
 }
 
 async function syncOnce() {
-  log('=== Старт цикла синхронизации ===');
+  log('=== Старт цикла синхронизации (Atrucks -> Google Sheets) ===');
   if (PILOT_LOGIST_NAME) {
-    log(`!!! РЕЖИМ ПИЛОТА: обрабатываются только лоты логиста "${PILOT_LOGIST_NAME}" !!!`);
+    log(`!!! РЕЖИМ ПИЛОТА: в таблицу попадают только лоты логиста "${PILOT_LOGIST_NAME}" !!!`);
   }
 
   let lots;
@@ -29,20 +42,30 @@ async function syncOnce() {
 
   log(`Получено лотов из Atrucks: ${lots.length}`);
 
+  let sheetIndex;
+  let logistsMap;
+  try {
+    [sheetIndex, logistsMap] = await Promise.all([
+      sheets.readLotsIndex(),
+      sheets.readLogistsMap(),
+    ]);
+  } catch (err) {
+    log(`ОШИБКА чтения Google Sheets: ${err.message}`);
+    return { error: err.message };
+  }
+
   const stats = {
     total: lots.length,
-    created: 0,
-    updated: 0,
+    written: 0,
     skippedNoChange: 0,
+    skippedNotPilot: 0,
+    deletedFromAti: 0,
+    deletedRowsOnly: 0,
     errors: 0,
-    deleted: 0,
   };
 
-  // Токены, для которых в рамках этого прогона уже зафиксирована
-  // проблема (лимит или ошибка авторизации) — повторно не дёргаем API.
-  const limitReachedTokens = new Set();
-
   const seenExtIds = [];
+  const toWrite = [];
 
   for (const lot of lots) {
     const extId = lot.ext_id;
@@ -51,20 +74,15 @@ async function syncOnce() {
       continue;
     }
 
-    seenExtIds.push(extId);
+    seenExtIds.push(String(extId));
 
-    const existing = db.getMapping(extId);
+    const existingDb = db.getMapping(extId);
+    const existingSheetRow = sheetIndex.byExtId.get(String(extId));
 
-    // Если уже синхронизировано и modified не изменился — пропускаем
-    if (existing && existing.modified === lot.modified && existing.ati_cargo_id) {
+    // Пропускаем пересчёт, только если лот не менялся на Atrucks
+    // И уже есть строка в таблице (иначе её нужно создать заново).
+    if (existingDb && existingDb.modified === lot.modified && existingSheetRow) {
       stats.skippedNoChange += 1;
-      db.upsertMapping({
-        ext_id: extId,
-        atrucks_id: lot.id,
-        ati_cargo_id: existing.ati_cargo_id,
-        logist_token: existing.logist_token,
-        modified: lot.modified,
-      });
       continue;
     }
 
@@ -72,146 +90,107 @@ async function syncOnce() {
     try {
       mapped = await mapLotToAtiBody(lot);
     } catch (err) {
-      if (err.message.startsWith('Лот пропущен:')) {
-        stats.skippedNoLogist = (stats.skippedNoLogist || 0) + 1;
-      } else {
-        stats.errors += 1;
-        log(`ОШИБКА маппинга лота ext_id=${extId} (atrucks_id=${lot.id}): ${err.message}`);
-      }
+      stats.errors += 1;
+      log(`ОШИБКА маппинга лота ext_id=${extId} (atrucks_id=${lot.id}): ${err.message}`);
       continue;
     }
 
-    // Пилотный режим: обрабатываем только лоты пилотного логиста.
-    // Лоты других логистов полностью игнорируются (не публикуются,
-    // не обновляются, их существующие карточки не трогаются).
-    if (PILOT_LOGIST_NAME && mapped.meta.logist.name !== PILOT_LOGIST_NAME) {
-      stats.skippedNotPilot = (stats.skippedNotPilot || 0) + 1;
-      continue;
-    }
-
-    const newToken = mapped.meta.logist.token;
-    const logistChanged =
-      existing && existing.ati_cargo_id && existing.logist_token !== newToken;
-
-    // Если для этого токена уже зафиксирована проблема (лимит или
-    // ошибка авторизации) в рамках этого прогона — не пытаемся
-    // делать с ним больше никаких операций (ни создание, ни обновление).
-    if (limitReachedTokens.has(newToken)) {
-      stats.skippedLimitReached = (stats.skippedLimitReached || 0) + 1;
-      continue;
-    }
-
-    try {
-      if (existing && existing.ati_cargo_id && !logistChanged) {
-        // Обновление тем же логистом
-        await ati.updateCargo(existing.ati_cargo_id, mapped.body, newToken);
-        db.upsertMapping({
-          ext_id: extId,
-          atrucks_id: lot.id,
-          ati_cargo_id: existing.ati_cargo_id,
-          logist_token: newToken,
-          modified: lot.modified,
-        });
-        stats.updated += 1;
-        log(`Обновлён груз: ext_id=${extId} -> ati_cargo_id=${existing.ati_cargo_id} (${mapped.meta.logist.name})`);
-      } else {
-        if (logistChanged) {
-          // Логист сменился — снимаем старую карточку старым токеном
-          try {
-            const result = await ati.deleteCargo(existing.ati_cargo_id, existing.logist_token);
-            if (result && result.notDeletable) {
-              log(
-                `Логист сменился, но старую карточку нельзя удалить через API (вероятно, есть отклики): ` +
-                  `ext_id=${extId} -> ati_cargo_id=${existing.ati_cargo_id}. Создаём новую карточку новым логистом, ` +
-                  `старая останется на ATI до закрытия вручную.`
-              );
-            } else {
-              log(`Логист сменился, снята старая карточка: ext_id=${extId} -> ati_cargo_id=${existing.ati_cargo_id}`);
-            }
-          } catch (err) {
-            log(`ОШИБКА снятия старой карточки при смене логиста ext_id=${extId}: ${err.message}`);
-          }
-        }
-
-        // Создание новой карточки
-        const { cargoId } = await ati.createCargo(mapped.body, newToken);
-        if (!cargoId) {
-          throw new Error('ATI не вернул cargo_id при создании');
-        }
-        db.upsertMapping({
-          ext_id: extId,
-          atrucks_id: lot.id,
-          ati_cargo_id: cargoId,
-          logist_token: newToken,
-          modified: lot.modified,
-        });
-        stats.created += 1;
-        log(`Создан груз: ext_id=${extId} -> ati_cargo_id=${cargoId} (${mapped.meta.logist.name})`);
-      }
-    } catch (err) {
-      const isLimitError = err && err.name === 'CargosLimitError';
-      const isAuthError = err && err.name === 'AuthError';
-      if (isLimitError || isAuthError) {
-        if (!limitReachedTokens.has(newToken)) {
-          limitReachedTokens.add(newToken);
-          const reason = isAuthError ? 'ОШИБКА АВТОРИЗАЦИИ (токен невалиден/истёк)' : 'ЛИМИТ ATI';
-          log(
-            `${reason}: ${err.message} (логист=${mapped.meta.logist.name}) — ` +
-              `новые карточки этим токеном больше не создаём в этом цикле`
-          );
-        }
-        stats.skippedLimitReached = (stats.skippedLimitReached || 0) + 1;
-      } else {
-        stats.errors += 1;
-        log(`ОШИБКА публикации лота ext_id=${extId} (atrucks_id=${lot.id}, логист=${mapped.meta.logist.name}): ${err.message}`);
-      }
-    }
-  }
-
-  // Снятие с публикации исчезнувших лотов
-  const stale = db.getStaleMappings(seenExtIds);
-  log(`Исчезло с Atrucks лотов: ${stale.length}`);
-
-  for (const row of stale) {
-    if (!row.ati_cargo_id) {
-      db.deleteMapping(row.ext_id);
-      continue;
-    }
-
-    // Пилотный режим: не трогаем карточки, опубликованные другими
-    // логистами (определяем по сохранённому токену).
     if (PILOT_LOGIST_NAME) {
-      const pilotLogist = require('./logists').LOGISTS.find(
-        (l) => l.name === PILOT_LOGIST_NAME
-      );
-      if (!pilotLogist || row.logist_token !== pilotLogist.token) {
+      const logistEntry = logistsMap.get(mapped.meta.clientName);
+      if (!logistEntry || logistEntry.logistName !== PILOT_LOGIST_NAME) {
+        stats.skippedNotPilot += 1;
         continue;
       }
     }
 
+    toWrite.push({
+      extId: String(extId),
+      rowNumber: existingSheetRow ? existingSheetRow.rowNumber : null,
+      clientName: mapped.meta.clientName,
+      from: mapped.meta.display.from,
+      to: mapped.meta.display.to,
+      cargoName: mapped.meta.display.cargoName,
+      weight: mapped.meta.display.weight,
+      volume: mapped.meta.display.volume,
+      bodyTypeText: mapped.meta.display.bodyTypeText,
+      rateNoVat: mapped.meta.display.rateNoVat,
+      rateWithVat: mapped.meta.display.rateWithVat,
+      loadDate: mapped.meta.display.loadDate,
+      unloadDate: mapped.meta.display.unloadDate,
+      bodyJson: JSON.stringify(mapped.body),
+    });
+
+    db.upsertMapping({
+      ext_id: extId,
+      atrucks_id: lot.id,
+      ati_cargo_id: null,
+      logist_token: null,
+      modified: lot.modified,
+    });
+  }
+
+  if (toWrite.length > 0) {
     try {
-      const result = await ati.deleteCargo(row.ati_cargo_id, row.logist_token);
-      db.deleteMapping(row.ext_id);
-      if (result && result.notDeletable) {
-        log(
-          `Груз нельзя удалить через API (вероятно, есть отклики): ext_id=${row.ext_id} -> ati_cargo_id=${row.ati_cargo_id}. ` +
-            `Запись из БД снята, карточка останется на ATI до закрытия вручную.`
-        );
-      } else {
-        stats.deleted += 1;
-        log(`Снят с ATI груз: ext_id=${row.ext_id} -> ati_cargo_id=${row.ati_cargo_id}`);
-      }
+      await sheets.writeLots(toWrite, sheetIndex.lastRow + 1);
+      stats.written = toWrite.length;
+      log(`Записано/обновлено строк в таблице: ${toWrite.length}`);
     } catch (err) {
       stats.errors += 1;
-      log(`ОШИБКА снятия груза ext_id=${row.ext_id} (ati_cargo_id=${row.ati_cargo_id}): ${err.message}`);
+      log(`ОШИБКА записи в Google Sheets: ${err.message}`);
+    }
+  }
+
+  // --- Уборка лотов, пропавших с Atrucks ---
+  const seenSet = new Set(seenExtIds);
+  const staleExtIds = [...sheetIndex.byExtId.keys()].filter((extId) => !seenSet.has(extId));
+
+  log(`Исчезло с Atrucks лотов (есть в таблице, нет в выдаче): ${staleExtIds.length}`);
+
+  const rowsToDelete = [];
+
+  for (const extId of staleExtIds) {
+    const row = sheetIndex.byExtId.get(extId);
+    rowsToDelete.push(row.rowNumber);
+
+    if (row.atiCargoId) {
+      const logistEntry = logistsMap.get(row.clientName);
+      if (!logistEntry || !logistEntry.token) {
+        log(
+          `ВНИМАНИЕ: лот ext_id=${extId} был опубликован (ati_cargo_id=${row.atiCargoId}), ` +
+            `но логист для клиента "${row.clientName}" не найден в листе "Логисты" — карточку на ATI ` +
+            `придётся снять вручную.`
+        );
+        stats.errors += 1;
+      } else {
+        try {
+          await ati.deleteCargo(row.atiCargoId, logistEntry.token);
+          stats.deletedFromAti += 1;
+          log(`Снята с ATI карточка ext_id=${extId} -> ati_cargo_id=${row.atiCargoId}`);
+        } catch (err) {
+          stats.errors += 1;
+          log(`ОШИБКА снятия карточки ext_id=${extId} (ati_cargo_id=${row.atiCargoId}): ${err.message}`);
+        }
+      }
+    } else {
+      stats.deletedRowsOnly += 1;
+    }
+
+    db.deleteMapping(extId);
+  }
+
+  if (rowsToDelete.length > 0) {
+    try {
+      await sheets.deleteLotRows(rowsToDelete);
+    } catch (err) {
+      stats.errors += 1;
+      log(`ОШИБКА удаления строк из Google Sheets: ${err.message}`);
     }
   }
 
   log(
-    `=== Итоги: всего=${stats.total}, создано=${stats.created}, обновлено=${stats.updated}, ` +
-      `без изменений=${stats.skippedNoChange}, пропущено(нет логиста)=${stats.skippedNoLogist || 0}, ` +
-      `пропущено(не пилот)=${stats.skippedNotPilot || 0}, пропущено(лимит ATI)=${stats.skippedLimitReached || 0}, ` +
-      `снято=${stats.deleted}, ошибок=${stats.errors} ===`
+    `=== Итоги: всего=${stats.total}, записано=${stats.written}, без изменений=${stats.skippedNoChange}, ` +
+      `пропущено(не пилот)=${stats.skippedNotPilot}, снято с ATI=${stats.deletedFromAti}, ` +
+      `удалено строк (не было опубликовано)=${stats.deletedRowsOnly}, ошибок=${stats.errors} ===`
   );
 
   return stats;
