@@ -7,12 +7,17 @@ const ati = require('./atiClient');
 const db = require('./db');
 const { mapLotToAtiBody } = require('./mapper');
 
+const PILOT_LOGIST_NAME = process.env.PILOT_LOGIST_NAME || null;
+
 function log(msg) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
 }
 
 async function syncOnce() {
   log('=== Старт цикла синхронизации ===');
+  if (PILOT_LOGIST_NAME) {
+    log(`!!! РЕЖИМ ПИЛОТА: обрабатываются только лоты логиста "${PILOT_LOGIST_NAME}" !!!`);
+  }
 
   let lots;
   try {
@@ -69,6 +74,14 @@ async function syncOnce() {
         stats.errors += 1;
         log(`ОШИБКА маппинга лота ext_id=${extId} (atrucks_id=${lot.id}): ${err.message}`);
       }
+      continue;
+    }
+
+    // Пилотный режим: обрабатываем только лоты пилотного логиста.
+    // Лоты других логистов полностью игнорируются (не публикуются,
+    // не обновляются, их существующие карточки не трогаются).
+    if (PILOT_LOGIST_NAME && mapped.meta.logist.name !== PILOT_LOGIST_NAME) {
+      stats.skippedNotPilot = (stats.skippedNotPilot || 0) + 1;
       continue;
     }
 
@@ -130,6 +143,18 @@ async function syncOnce() {
       db.deleteMapping(row.ext_id);
       continue;
     }
+
+    // Пилотный режим: не трогаем карточки, опубликованные другими
+    // логистами (определяем по сохранённому токену).
+    if (PILOT_LOGIST_NAME) {
+      const pilotLogist = require('./logists').LOGISTS.find(
+        (l) => l.name === PILOT_LOGIST_NAME
+      );
+      if (!pilotLogist || row.logist_token !== pilotLogist.token) {
+        continue;
+      }
+    }
+
     try {
       await ati.deleteCargo(row.ati_cargo_id, row.logist_token);
       db.deleteMapping(row.ext_id);
@@ -144,6 +169,7 @@ async function syncOnce() {
   log(
     `=== Итоги: всего=${stats.total}, создано=${stats.created}, обновлено=${stats.updated}, ` +
       `без изменений=${stats.skippedNoChange}, пропущено(нет логиста)=${stats.skippedNoLogist || 0}, ` +
+      `пропущено(не пилот)=${stats.skippedNotPilot || 0}, ` +
       `снято=${stats.deleted}, ошибок=${stats.errors} ===`
   );
 
