@@ -38,8 +38,8 @@ async function syncOnce() {
     deleted: 0,
   };
 
-  // Токены, для которых в рамках этого прогона уже получен
-  // cargos_limit_reached — повторно не дёргаем API этим токеном.
+  // Токены, для которых в рамках этого прогона уже зафиксирована
+  // проблема (лимит или ошибка авторизации) — повторно не дёргаем API.
   const limitReachedTokens = new Set();
 
   const seenExtIds = [];
@@ -93,11 +93,10 @@ async function syncOnce() {
     const logistChanged =
       existing && existing.ati_cargo_id && existing.logist_token !== newToken;
 
-    // Если для этого токена уже зафиксирован лимит в этом прогоне —
-    // не пытаемся создавать новые карточки (но обновление существующих
-    // всё ещё пробуем, лимит обычно касается именно новых размещений).
-    const willCreate = !existing || !existing.ati_cargo_id || logistChanged;
-    if (willCreate && limitReachedTokens.has(newToken)) {
+    // Если для этого токена уже зафиксирована проблема (лимит или
+    // ошибка авторизации) в рамках этого прогона — не пытаемся
+    // делать с ним больше никаких операций (ни создание, ни обновление).
+    if (limitReachedTokens.has(newToken)) {
       stats.skippedLimitReached = (stats.skippedLimitReached || 0) + 1;
       continue;
     }
@@ -151,18 +150,20 @@ async function syncOnce() {
       }
     } catch (err) {
       const isLimitError = err && err.name === 'CargosLimitError';
-      if (isLimitError) {
+      const isAuthError = err && err.name === 'AuthError';
+      if (isLimitError || isAuthError) {
         if (!limitReachedTokens.has(newToken)) {
           limitReachedTokens.add(newToken);
+          const reason = isAuthError ? 'ОШИБКА АВТОРИЗАЦИИ (токен невалиден/истёк)' : 'ЛИМИТ ATI';
           log(
-            `ЛИМИТ ATI: ${err.message} (логист=${mapped.meta.logist.name}) — ` +
+            `${reason}: ${err.message} (логист=${mapped.meta.logist.name}) — ` +
               `новые карточки этим токеном больше не создаём в этом цикле`
           );
         }
         stats.skippedLimitReached = (stats.skippedLimitReached || 0) + 1;
       } else {
         stats.errors += 1;
-        log(`ОШИБКА публикации лота ext_id=${extId} (atrucks_id=${lot.id}): ${err.message}`);
+        log(`ОШИБКА публикации лота ext_id=${extId} (atrucks_id=${lot.id}, логист=${mapped.meta.logist.name}): ${err.message}`);
       }
     }
   }
