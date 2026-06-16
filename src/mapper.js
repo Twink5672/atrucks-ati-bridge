@@ -115,23 +115,25 @@ function parseDateRangeToIso(rangeRaw) {
 // --------------------------------------------------------------
 // Извлекает "чистое" название города из строки вида
 // "г Черкесск" / "Челябинская обл, г Копейск" / "141865, Московская обл, ..."
-// Берём последний сегмент с "г "/"город"/"пос"/"село" если есть,
-// иначе — последний сегмент целиком.
+// Срезает префиксы типов населённых пунктов и хвосты в скобках
+// (например, "Ярославль (2 точки)" -> "Ярославль").
 // --------------------------------------------------------------
 function extractCityName(locationStr) {
   if (!locationStr) return null;
 
   const parts = locationStr.split(',').map((p) => p.trim());
 
-  // ищем сегмент, начинающийся с "г "/"г." (город)
-  const cityPart = parts.find((p) => /^г[.\s]/i.test(p));
-  if (cityPart) {
-    return cityPart.replace(/^г[.\s]+/i, '').trim();
-  }
+  // префиксы типов населённых пунктов, которые нужно срезать
+  const prefixRegex = /^(г|пос(?:елок)?|пгт|с(?:ело)?|д(?:еревня)?|рп|х(?:утор)?|ст(?:аница)?)[.\s]+/i;
 
-  // иначе берём последний непустой сегмент, убирая индекс/числа
-  const last = parts[parts.length - 1];
-  return last;
+  // ищем сегмент с распознаваемым типом НП
+  const npPart = parts.find((p) => prefixRegex.test(p));
+  const raw = npPart ? npPart.replace(prefixRegex, '').trim() : parts[parts.length - 1];
+
+  // убираем суффиксы в скобках, например "Ярославль (2 точки)"
+  const cleaned = raw.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+
+  return cleaned || null;
 }
 
 // --------------------------------------------------------------
@@ -154,8 +156,8 @@ async function mapLotToAtiBody(lot) {
   const destinationCity = extractCityName(destination);
 
   const [fromCityId, toCityId] = await Promise.all([
-    resolveCityId(originCity),
-    resolveCityId(destinationCity),
+    resolveCityId(originCity, origin),
+    resolveCityId(destinationCity, destination),
   ]);
 
   if (!fromCityId || !toCityId) {
