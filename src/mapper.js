@@ -1,10 +1,17 @@
 // ============================================================
 // Маппинг лота Atrucks -> тело запроса ATI /v2/cargos
+//
+// Логист больше НЕ резолвится здесь и не обязателен для построения
+// тела: с переходом на Google Sheets привязка "клиент -> логист"
+// живёт в самой таблице (лист "Логисты", редактируется руками) и
+// подставляется в contacts/boards непосредственно в Apps Script
+// перед публикацией. Здесь только определяется companyName для
+// отображения в колонке "Клиент".
 // ============================================================
 
 const config = require('./config');
 const { resolveCityId } = require('./atiCities');
-const { getLogistForCompanyId } = require('./logists');
+const { resolveCompanyName } = require('./companyNames');
 
 // --------------------------------------------------------------
 // Типы кузова: ключевые слова -> код body_type ATI
@@ -154,12 +161,7 @@ function extractCityName(locationStr) {
 // meta — вспомогательные данные (для логов/отладки)
 // --------------------------------------------------------------
 async function mapLotToAtiBody(lot) {
-  const logist = getLogistForCompanyId(lot.company_id);
-  if (!logist) {
-    throw new Error(
-      `Лот пропущен: company_id=${lot.company_id} не закреплён за логистом с токеном (или в списке пропуска)`
-    );
-  }
+  const clientName = resolveCompanyName(lot.company_id);
 
   const origin = (lot.origins && lot.origins[0]) || null;
   const destination = (lot.destinations && lot.destinations[0]) || null;
@@ -191,13 +193,14 @@ async function mapLotToAtiBody(lot) {
   const transport = lot.transport || {};
 
   const { weight, volume } = parseWeightVolume(cargoInfo['cargo_info:cargo_volume']);
-  const bodyTypes = mapBodyTypes(transport['transport:truck_kinds']);
+  const truckKindsRaw = transport['transport:truck_kinds'] || '';
+  const bodyTypes = mapBodyTypes(truckKindsRaw);
 
   const startPrice = Number(lot.start_price) || 0;
   const isRateRequest = !startPrice || startPrice <= 0;
 
   // start_price на Atrucks — сумма с НДС 22%.
-  // Без НДС = start_price / 1.22, затем скидка 20%.
+  // Без НДС = start_price / 1.22, затем скидка (см. config.pricing.factor).
   const rate = isRateRequest
     ? null
     : Math.round((startPrice / config.pricing.vatDivider) * config.pricing.factor);
@@ -225,6 +228,9 @@ async function mapLotToAtiBody(lot) {
     unloadingLocation.address = destination;
   }
 
+  // contacts/boards с конкретным логистом сюда НЕ включаются — это
+  // добавляется в Apps Script непосредственно перед публикацией, на
+  // основе строки "Логисты" таблицы, найденной по clientName.
   const body = {
     cargo_application: {
       route: {
@@ -269,7 +275,6 @@ async function mapLotToAtiBody(lot) {
             rate_without_vat: rate,
             rate_with_vat: rateWithVat,
           },
-      contacts: [logist.contactId],
       boards: [
         {
           id: config.ati.boardId,
@@ -283,6 +288,7 @@ async function mapLotToAtiBody(lot) {
   return {
     body,
     meta: {
+      clientName,
       originCity,
       destinationCity,
       fromCityId,
@@ -294,7 +300,19 @@ async function mapLotToAtiBody(lot) {
       volume,
       loadIso,
       unloadIso,
-      logist,
+      // Поля для отображения в таблице (человекочитаемые, не city_id)
+      display: {
+        from: origin,
+        to: destination,
+        cargoName,
+        weight,
+        volume,
+        bodyTypeText: truckKindsRaw || '—',
+        rateNoVat: rate,
+        rateWithVat,
+        loadDate: lot.load_range || '',
+        unloadDate: lot.unload_range || '',
+      },
     },
   };
 }
