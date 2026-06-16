@@ -196,8 +196,12 @@ async function mapLotToAtiBody(lot) {
   const startPrice = Number(lot.start_price) || 0;
   const isRateRequest = !startPrice || startPrice <= 0;
 
-  const rateWithVat = isRateRequest ? null : Math.round(startPrice * config.pricing.factor);
-  const rate = isRateRequest ? null : Math.round(rateWithVat / config.pricing.vatDivider);
+  // start_price на Atrucks — сумма с НДС 22%.
+  // Без НДС = start_price / 1.22, затем скидка 20%.
+  const rate = isRateRequest
+    ? null
+    : Math.round((startPrice / config.pricing.vatDivider) * config.pricing.factor);
+  const rateWithVat = isRateRequest ? null : Math.round(rate * config.pricing.vatDivider);
 
   const cargoName = cargoInfo['cargo_info:cargo_kind'] || 'Груз';
 
@@ -263,6 +267,7 @@ async function mapLotToAtiBody(lot) {
             type: 'with-bargaining',
             currency_type: config.ati.currencyType,
             rate_without_vat: rate,
+            rate_with_vat: rateWithVat,
           },
       contacts: [logist.contactId],
       boards: [
