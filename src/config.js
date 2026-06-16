@@ -58,7 +58,7 @@ module.exports = {
     // start_price на Atrucks — сумма с НДС 22%.
     // rate (без НДС) = (start_price / vatDivider) * factor
     // rate_with_vat = rate * vatDivider
-    factor: 0.8, // скидка 20% от суммы без НДС
+    factor: 0.85, // скидка 15% от суммы без НДС
     vatDivider: 1.22,
   },
 
@@ -72,5 +72,22 @@ module.exports = {
   db: {
     // Путь к файлу SQLite на volume Railway
     path: process.env.DB_PATH || '/data/atrucks-ati.sqlite',
+  },
+
+  // --- Google Sheets ---
+  // Лоты теперь не публикуются на ATI автоматически — сервис только
+  // пишет их в Google-таблицу. Публикация на ATI — вручную, кнопкой
+  // в Apps Script внутри самой таблицы (см. AtrucksSheetPublish.gs).
+  googleSheets: {
+    spreadsheetId: process.env.GOOGLE_SHEET_ID || '',
+    serviceAccountEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || '',
+    // Приватный ключ из JSON сервис-аккаунта. На Railway удобнее хранить
+    // в одну строку с буквальными "\n" — ниже они разворачиваются обратно.
+    serviceAccountPrivateKey: (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || '').replace(
+      /\\n/g,
+      '\n'
+    ),
+    lotsSheetName: process.env.GOOGLE_SHEET_LOTS_TAB || 'Лоты Atrucks',
+    logistsSheetName: process.env.GOOGLE_SHEET_LOGISTS_TAB || 'Логисты',
   },
 };
