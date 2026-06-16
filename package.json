@@ -11,5 +11,8 @@
     "start": "node --no-warnings src/index.js",
     "dev": "node --no-warnings src/index.js"
   },
+  "dependencies": {
+    "googleapis": "^173.0.0"
+  },
   "license": "UNLICENSED"
 }
