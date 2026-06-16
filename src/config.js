@@ -55,9 +55,10 @@ module.exports = {
 
   // --- Бизнес-логика ---
   pricing: {
-    // Итоговая ставка с НДС для перевозчика = start_price (Atrucks, с НДС) * factor
-    factor: 0.85,
-    // Коэффициент для пересчёта "с НДС" -> "без НДС" (НДС 22%)
+    // start_price на Atrucks — сумма с НДС 22%.
+    // rate (без НДС) = (start_price / vatDivider) * factor
+    // rate_with_vat = rate * vatDivider
+    factor: 0.8, // скидка 20% от суммы без НДС
     vatDivider: 1.22,
   },
 
