@@ -7,8 +7,6 @@ const ati = require('./atiClient');
 const db = require('./db');
 const { mapLotToAtiBody } = require('./mapper');
 
-const { CargosLimitError } = ati;
-
 const PILOT_LOGIST_NAME = process.env.PILOT_LOGIST_NAME || null;
 
 function log(msg) {
@@ -152,7 +150,8 @@ async function syncOnce() {
         log(`Создан груз: ext_id=${extId} -> ati_cargo_id=${cargoId} (${mapped.meta.logist.name})`);
       }
     } catch (err) {
-      if (err instanceof CargosLimitError) {
+      const isLimitError = err && err.name === 'CargosLimitError';
+      if (isLimitError) {
         if (!limitReachedTokens.has(newToken)) {
           limitReachedTokens.add(newToken);
           log(
