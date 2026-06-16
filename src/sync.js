@@ -6,7 +6,8 @@ const atrucks = require('./atrucksClient');
 const ati = require('./atiClient');
 const db = require('./db');
 const { mapLotToAtiBody } = require('./mapper');
-const { CargosLimitError } = require('./atiClient');
+
+const { CargosLimitError } = ati;
 
 const PILOT_LOGIST_NAME = process.env.PILOT_LOGIST_NAME || null;
 
