@@ -1,6 +1,7 @@
 // ============================================================
 // Dry-run: прогоняет ВСЕ лоты Atrucks через маппинг (города,
-// типы кузова, логисты, цены), но НИЧЕГО не публикует на ATI.
+// типы кузова, клиенты, цены), но НИЧЕГО не публикует на ATI и
+// НИЧЕГО не пишет в Google Sheets.
 // Показывает статистику и примеры ошибок/пропусков.
 //
 // Запуск: node src/test-dry-run.js
@@ -16,21 +17,23 @@ async function main() {
 
   const stats = {
     ok: 0,
-    skippedNoLogist: 0,
     errors: 0,
   };
 
   const okSamples = [];
   const errorSamples = [];
-  const byLogist = new Map();
+  const byClient = new Map();
+  const unknownClients = new Set();
 
   for (const lot of lots) {
     try {
       const { body, meta } = await mapLotToAtiBody(lot);
       stats.ok += 1;
 
-      const logistName = meta.logist.name;
-      byLogist.set(logistName, (byLogist.get(logistName) || 0) + 1);
+      byClient.set(meta.clientName, (byClient.get(meta.clientName) || 0) + 1);
+      if (meta.clientName.startsWith('Неизвестно')) {
+        unknownClients.add(`${meta.clientName} (company_id=${lot.company_id})`);
+      }
 
       if (okSamples.length < 5) {
         okSamples.push({
@@ -40,39 +43,41 @@ async function main() {
           bodyTypes: meta.bodyTypes,
           rate: meta.rate == null ? 'запрос ставки' : meta.rate,
           rateWithVat: meta.rateWithVat == null ? 'запрос ставки' : meta.rateWithVat,
-          logist: logistName,
+          client: meta.clientName,
         });
       }
     } catch (err) {
-      if (err.message.startsWith('Лот пропущен:')) {
-        stats.skippedNoLogist += 1;
-      } else {
-        stats.errors += 1;
-        if (errorSamples.length < 15) {
-          errorSamples.push({
-            ext_id: lot.ext_id,
-            atrucks_id: lot.id,
-            error: err.message,
-          });
-        }
+      stats.errors += 1;
+      if (errorSamples.length < 15) {
+        errorSamples.push({
+          ext_id: lot.ext_id,
+          atrucks_id: lot.id,
+          error: err.message,
+        });
       }
     }
   }
 
   console.log('=== ИТОГИ ===');
   console.log(`Готовы к публикации (ok): ${stats.ok}`);
-  console.log(`Пропущены (нет логиста / в списке пропуска): ${stats.skippedNoLogist}`);
   console.log(`Ошибки маппинга (требуют внимания): ${stats.errors}`);
 
-  console.log('\n=== Распределение по логистам ===');
-  for (const [name, count] of byLogist.entries()) {
+  console.log('\n=== Распределение по клиентам ===');
+  for (const [name, count] of byClient.entries()) {
     console.log(`${name}: ${count}`);
+  }
+
+  if (unknownClients.size > 0) {
+    console.log('\n=== Неопознанные company_id (добавьте в src/companyNames.js) ===');
+    for (const c of unknownClients) {
+      console.log(c);
+    }
   }
 
   console.log('\n=== Примеры готовых к публикации ===');
   for (const s of okSamples) {
     console.log(
-      `ext_id=${s.ext_id} (atrucks_id=${s.atrucks_id}) | ${s.route} | body_types=${JSON.stringify(s.bodyTypes)} | rate=${s.rate} (с НДС ${s.rateWithVat}) | логист=${s.logist}`
+      `ext_id=${s.ext_id} (atrucks_id=${s.atrucks_id}) | ${s.route} | body_types=${JSON.stringify(s.bodyTypes)} | rate=${s.rate} (с НДС ${s.rateWithVat}) | клиент=${s.client}`
     );
   }
 
