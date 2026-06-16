@@ -22,6 +22,11 @@ async function fetchSuggestion(prefix) {
   });
 
   if (!res.ok) {
+    // 400 обычно означает "слишком длинный/некорректный prefix" —
+    // не критично, просто не нашли город этим способом.
+    if (res.status === 400) {
+      return null;
+    }
     const text = await res.text().catch(() => '');
     throw new Error(
       `ATI autocomplete вернул ${res.status} для "${prefix}": ${text.slice(0, 200)}`
@@ -57,17 +62,20 @@ async function resolveCityId(cityName, fullLocationStr) {
   let cityId = await fetchSuggestion(cityName);
 
   // Fallback: пробуем полную строку с регионом (помогает для
-  // мелких деревень/сёл, неоднозначных без региона)
+  // мелких деревень/сёл, неоднозначных без региона).
+  // ATI ограничивает prefix 200 символами — длинные адреса обрезаем.
   if (!cityId && fullLocationStr && fullLocationStr !== cityName) {
-    const cachedFull = db.getCachedCityId(fullLocationStr);
+    const trimmed = fullLocationStr.length > 190 ? fullLocationStr.slice(0, 190) : fullLocationStr;
+
+    const cachedFull = db.getCachedCityId(trimmed);
     if (cachedFull) {
       db.cacheCityId(cityName, cachedFull);
       return cachedFull;
     }
 
-    cityId = await fetchSuggestion(fullLocationStr);
+    cityId = await fetchSuggestion(trimmed);
     if (cityId) {
-      db.cacheCityId(fullLocationStr, String(cityId));
+      db.cacheCityId(trimmed, String(cityId));
     }
   }
 
