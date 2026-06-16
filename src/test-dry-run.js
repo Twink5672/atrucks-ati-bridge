@@ -38,8 +38,8 @@ async function main() {
           atrucks_id: lot.id,
           route: `${meta.originCity} -> ${meta.destinationCity}`,
           bodyTypes: meta.bodyTypes,
-          rate: meta.rate,
-          rateWithVat: meta.rateWithVat,
+          rate: meta.rate == null ? 'запрос ставки' : meta.rate,
+          rateWithVat: meta.rateWithVat == null ? 'запрос ставки' : meta.rateWithVat,
           logist: logistName,
         });
       }
