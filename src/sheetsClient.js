@@ -1,15 +1,18 @@
 // ============================================================
 // Клиент Google Sheets: чтение справочника "Логисты" и
-// запись/чтение листа "Лоты Atrucks".
+// запись/чтение вкладок с лотами — теперь одна вкладка на каждого
+// логиста (название вкладки = "ФИО логиста" из листа "Логисты"),
+// плюс вкладка-корзина "Без логиста" для клиентов без привязки.
 //
 // Использует сервис-аккаунт Google (JWT). Таблицу нужно расшарить
 // на e-mail сервис-аккаунта с правами Редактор.
 //
-// Структура листа "Лоты Atrucks" (columns A..U):
+// Структура каждой вкладки с лотами (columns A..U) — одинаковая
+// на всех вкладках:
 //   A Статус             — пишет Apps Script после попытки публикации
 //   B Внутренний номер    — номер лота на Atrucks (lot.id)
 //   C Клиент
-//   D Логист             — ARRAYFORMULA в таблице, Node не пишет
+//   D Логист             — ARRAYFORMULA, Node не пишет
 //   E Откуда
 //   F Дата погрузки
 //   G Куда
@@ -29,21 +32,44 @@
 //   U ext_id              — технический ключ, в самом конце
 //
 // Структура листа "Логисты" (columns A..D):
-//   A Клиент, B ФИО логиста, C Токен ATI, D Contact ID ATI
+//   A Клиент, B ФИО логиста (= название вкладки), C Токен ATI, D Contact ID ATI
 // ============================================================
 
 const { google } = require('googleapis');
 const config = require('./config');
 
-const LOTS_RANGE_FULL = (sheet) => `'${sheet}'!A2:U`;
 const LOGISTS_RANGE = (sheet) => `'${sheet}'!A2:D`;
 
-// Индексы в массиве значений строки (0-based)
+// Индексы в массиве значений строки (0-based), одинаковы на всех вкладках
 const IDX = {
   CLIENT: 2, // C
   ATI_CARGO_ID: 17, // R
   EXT_ID: 20, // U
 };
+
+const HEADER_ROW = [
+  'Статус',
+  'Внутренний номер',
+  'Клиент',
+  'Логист',
+  'Откуда',
+  'Дата погрузки',
+  'Куда',
+  'Дата выгрузки',
+  'Груз',
+  'Вес',
+  'Объём',
+  'Тип кузова',
+  'Ставка клиента без НДС',
+  'Ставка клиента с НДС',
+  'Ставка перевозчика без НДС',
+  'Ставка перевозчика с НДС',
+  'Маржа',
+  'ATI_cargo_id',
+  'ATI_Body_JSON',
+  'Обновлено',
+  'ext_id',
+];
 
 let sheetsApiPromise = null;
 
@@ -66,39 +92,98 @@ function getSheetsApi() {
 }
 
 /**
- * Читает лист "Лоты Atrucks" целиком.
- * @returns {Promise<{ byExtId: Map<string, {rowNumber:number, clientName:string, atiCargoId:string}>, lastRow: number }>}
+ * Убеждается, что для каждого имени из tabNames есть вкладка в таблице.
+ * Недостающие создаёт, ставит заголовок (A1:U1) и формулу подбора
+ * логиста (D2).
+ * @param {string[]} tabNames
+ * @returns {Promise<Map<string, number>>} название вкладки -> sheetId
  */
-async function readLotsIndex() {
+async function ensureTabs(tabNames) {
   const sheets = getSheetsApi();
-  const { spreadsheetId, lotsSheetName } = config.googleSheets;
+  const { spreadsheetId, logistsSheetName } = config.googleSheets;
 
-  const res = await sheets.spreadsheets.values.get({
+  const meta = await sheets.spreadsheets.get({
     spreadsheetId,
-    range: LOTS_RANGE_FULL(lotsSheetName),
+    fields: 'sheets.properties',
+  });
+  const existing = new Map(
+    meta.data.sheets.map((s) => [s.properties.title, s.properties.sheetId])
+  );
+
+  const missing = tabNames.filter((name) => !existing.has(name));
+  if (missing.length === 0) return existing;
+
+  const addRequests = missing.map((title) => ({ addSheet: { properties: { title } } }));
+  const addRes = await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: { requests: addRequests },
+  });
+  addRes.data.replies.forEach((reply, i) => {
+    existing.set(missing[i], reply.addSheet.properties.sheetId);
   });
 
-  const rows = res.data.values || [];
+  const headerData = missing.map((title) => ({
+    range: `'${title}'!A1:U1`,
+    values: [HEADER_ROW],
+  }));
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: 'RAW', data: headerData },
+  });
+
+  const formulaData = missing.map((title) => ({
+    range: `'${title}'!D2`,
+    values: [
+      [
+        `=ARRAYFORMULA(IF(C2:C="", "", IFERROR(VLOOKUP(C2:C, '${logistsSheetName}'!A:D, 2, FALSE), "не найден")))`,
+      ],
+    ],
+  }));
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: 'USER_ENTERED', data: formulaData },
+  });
+
+  return existing;
+}
+
+/**
+ * Читает все указанные вкладки одним запросом (batchGet).
+ * @param {string[]} tabNames
+ * @returns {Promise<{
+ *   byExtId: Map<string, {tabName:string, rowNumber:number, clientName:string, atiCargoId:string}>,
+ *   lastRowByTab: Map<string, number>
+ * }>}
+ */
+async function readAllLotsIndex(tabNames) {
+  const sheets = getSheetsApi();
+  const { spreadsheetId } = config.googleSheets;
+
+  const ranges = tabNames.map((name) => `'${name}'!A2:U`);
+  const res = await sheets.spreadsheets.values.batchGet({ spreadsheetId, ranges });
+
   const byExtId = new Map();
-  // Строка 1 — заголовок, она всегда "занята". Дальше считаем только
-  // строки, где реально есть ext_id (колонка U) — колонка D (формула
-  // подбора логиста) разворачивается на весь лист и из-за этого
-  // "выглядит непустой" для Sheets API даже там, где данных нет.
-  let lastUsedRow = 1;
+  const lastRowByTab = new Map(tabNames.map((name) => [name, 1]));
 
-  rows.forEach((row, idx) => {
-    const extId = row[IDX.EXT_ID];
-    if (!extId) return;
-    const rowNumber = idx + 2; // +2: 1-based + заголовок
-    byExtId.set(String(extId), {
-      rowNumber,
-      clientName: row[IDX.CLIENT] || '',
-      atiCargoId: row[IDX.ATI_CARGO_ID] || '',
+  (res.data.valueRanges || []).forEach((valueRange, tabIdx) => {
+    const tabName = tabNames[tabIdx];
+    const rows = valueRange.values || [];
+
+    rows.forEach((row, idx) => {
+      const extId = row[IDX.EXT_ID];
+      if (!extId) return;
+      const rowNumber = idx + 2;
+      byExtId.set(String(extId), {
+        tabName,
+        rowNumber,
+        clientName: row[IDX.CLIENT] || '',
+        atiCargoId: row[IDX.ATI_CARGO_ID] || '',
+      });
+      lastRowByTab.set(tabName, Math.max(lastRowByTab.get(tabName), rowNumber));
     });
-    lastUsedRow = Math.max(lastUsedRow, rowNumber);
   });
 
-  return { byExtId, lastRow: lastUsedRow };
+  return { byExtId, lastRowByTab };
 }
 
 /**
@@ -121,7 +206,7 @@ async function readLogistsMap() {
     const clientName = (row[0] || '').trim();
     if (!clientName) return;
     map.set(clientName, {
-      logistName: row[1] || '',
+      logistName: (row[1] || '').trim(),
       token: row[2] || '',
       contactId: row[3] || '',
     });
@@ -132,14 +217,13 @@ async function readLogistsMap() {
 
 /**
  * Записывает/обновляет пачку лотов одним запросом batchUpdate.
- * Никогда не трогает колонки A (Статус), D (Логист), R (ATI_cargo_id) —
- * это зона Apps Script / результата публикации.
+ * Каждый лот уже несёт своё целевое tabName и конкретный row (вызывающий
+ * код сам решает, новая это строка или существующая).
+ * Никогда не трогает колонки A (Статус), D (Логист), R (ATI_cargo_id).
  *
  * @param {Array<{
- *   extId: string,
- *   rowNumber: number, // уже известная строка (из readLotsIndex) или null для новых
- *   internalNumber: string|number,
- *   clientName: string,
+ *   tabName: string, row: number,
+ *   extId: string, internalNumber: string|number, clientName: string,
  *   from: string, to: string, cargoName: string,
  *   weight: string|number, volume: string|number, bodyTypeText: string,
  *   clientRateNoVat: string|number, clientRateWithVat: string|number,
@@ -148,21 +232,19 @@ async function readLogistsMap() {
  *   loadDate: string, unloadDate: string,
  *   bodyJson: string,
  * }>} lots
- * @param {number} nextFreeRow — первая свободная строка для новых лотов
  */
-async function writeLots(lots, nextFreeRow) {
+async function writeLots(lots) {
   if (lots.length === 0) return;
 
   const sheets = getSheetsApi();
-  const { spreadsheetId, lotsSheetName } = config.googleSheets;
+  const { spreadsheetId } = config.googleSheets;
   const updatedAt = new Date().toISOString();
 
   const data = [];
-  let nextRow = nextFreeRow;
 
   for (const lot of lots) {
-    const row = lot.rowNumber || nextRow++;
-    const sheet = lotsSheetName;
+    const sheet = lot.tabName;
+    const row = lot.row;
 
     data.push({
       range: `'${sheet}'!B${row}:C${row}`,
@@ -208,35 +290,54 @@ async function writeLots(lots, nextFreeRow) {
 }
 
 /**
- * Удаляет указанные строки листа "Лоты Atrucks" (лоты, пропавшие с Atrucks).
- * @param {number[]} rowNumbers — 1-based номера строк листа
+ * Удаляет указанные строки (лоты, пропавшие с Atrucks, либо переехавшие
+ * на другую вкладку логиста — старая строка тоже удаляется).
+ * @param {Array<{tabName: string, rowNumber: number}>} deletions
  */
-async function deleteLotRows(rowNumbers) {
-  if (rowNumbers.length === 0) return;
+async function deleteLotRows(deletions) {
+  if (deletions.length === 0) return;
 
   const sheets = getSheetsApi();
-  const { spreadsheetId, lotsSheetName } = config.googleSheets;
+  const { spreadsheetId } = config.googleSheets;
 
-  const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
-  const sheetInfo = sheetMeta.data.sheets.find(
-    (s) => s.properties.title === lotsSheetName
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties',
+  });
+  const sheetIdByTitle = new Map(
+    meta.data.sheets.map((s) => [s.properties.title, s.properties.sheetId])
   );
-  if (!sheetInfo) throw new Error(`Лист "${lotsSheetName}" не найден`);
-  const sheetId = sheetInfo.properties.sheetId;
 
-  // Удаляем от последней строки к первой, чтобы индексы не сдвигались
-  const sorted = [...rowNumbers].sort((a, b) => b - a);
+  const rowsByTab = new Map();
+  deletions.forEach(({ tabName, rowNumber }) => {
+    if (!rowsByTab.has(tabName)) rowsByTab.set(tabName, []);
+    rowsByTab.get(tabName).push(rowNumber);
+  });
 
-  const requests = sorted.map((rowNumber) => ({
-    deleteDimension: {
-      range: {
-        sheetId,
-        dimension: 'ROWS',
-        startIndex: rowNumber - 1, // 0-based
-        endIndex: rowNumber,
-      },
-    },
-  }));
+  const requests = [];
+  rowsByTab.forEach((rows, tabName) => {
+    const sheetId = sheetIdByTitle.get(tabName);
+    if (sheetId == null) return; // вкладку, видимо, удалили руками — пропускаем
+
+    // Удаляем от последней строки к первой (в рамках вкладки), чтобы
+    // индексы не сдвигались.
+    [...rows]
+      .sort((a, b) => b - a)
+      .forEach((rowNumber) => {
+        requests.push({
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowNumber - 1,
+              endIndex: rowNumber,
+            },
+          },
+        });
+      });
+  });
+
+  if (requests.length === 0) return;
 
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
@@ -245,7 +346,8 @@ async function deleteLotRows(rowNumbers) {
 }
 
 module.exports = {
-  readLotsIndex,
+  ensureTabs,
+  readAllLotsIndex,
   readLogistsMap,
   writeLots,
   deleteLotRows,
