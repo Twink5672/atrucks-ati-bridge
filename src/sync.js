@@ -94,7 +94,9 @@ async function syncOnce() {
   const seenExtIds = [];
   const toWrite = [];
   const rowsToDelete = [];
-  const nextRowByTab = new Map(requiredTabsList.map((t) => [t, lotsIndex.lastRowByTab.get(t) || 1]));
+  const nextRowByTab = new Map(
+    requiredTabsList.map((t) => [t, (lotsIndex.lastRowByTab.get(t) || 1) + 1])
+  );
 
   for (const lot of lots) {
     const extId = lot.ext_id;
