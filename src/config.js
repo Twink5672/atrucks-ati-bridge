@@ -47,6 +47,19 @@ module.exports = {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
   },
 
+  // --- Express Isource ---
+  // Сессия (cookie + csrf-токен) копируется из DevTools вручную и со
+  // временем истекает — обновляется так же, как ATRUCKS_COOKIE.
+  express: {
+    baseUrl: 'https://express.isource.ru',
+    cookie: process.env.EXPRESS_COOKIE || '',
+    csrfToken: process.env.EXPRESS_CSRF_TOKEN || '',
+    pollIntervalMinutes: Number(process.env.EXPRESS_POLL_INTERVAL_MINUTES || 10),
+    // Префикс ext_id для строк с этой площадки — чтобы цикл синхронизации
+    // Atrucks не путал и не удалял строки, пришедшие с Express, и наоборот.
+    extIdPrefix: 'express:',
+  },
+
   // --- ATI.SU ---
   ati: {
     apiBase: 'https://api.ati.su',
