@@ -96,13 +96,21 @@ async function fetchAllOrdersDirect() {
     const res = await fetch(url, {
       method: 'GET',
       headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
+        Accept: '*/*',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'max-age=0',
         Cookie: cookie,
-        'X-Auth-Token': csrfToken,
+        Referer: `${baseUrl}/order/list/offers`,
+        'Sec-Ch-Ua': '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"macOS"',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
         'User-Agent':
           'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
-        Referer: `${baseUrl}/order/list/offers`,
+        'X-Auth-Token': csrfToken,
       },
       ...(proxyAgent ? { dispatcher: proxyAgent } : {}),
     }).catch((err) => {
