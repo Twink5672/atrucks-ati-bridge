@@ -127,6 +127,40 @@ const BODY_TYPE_NAMES = {
 function describeBodyTypes(codes) {
   return codes.map((c) => BODY_TYPE_NAMES[c] || `код ${c}`).join(', ');
 }
+
+// --------------------------------------------------------------
+// Парсинг "transport:truck_mode": "20 т (82 м³)" или "5 т (20-30 м³)" —
+// это требуемая вместимость МАШИНЫ, а не объём самого груза. Atrucks
+// для многих заказов вообще не передаёт реальный объём груза (только
+// вес в cargo_info:cargo_volume) — в таких случаях это число
+// используется ТОЛЬКО для отображения как ориентир, явно помеченный,
+// что это не точный объём груза. В тело запроса на ATI это число НЕ
+// попадает — туда уходит только реальный объём груза (или ничего).
+// --------------------------------------------------------------
+function parseVehicleCapacityVolume(truckModeRaw) {
+  if (!truckModeRaw) return null;
+  const match = truckModeRaw.match(/\(([\d.,]+(?:\s*[-–]\s*[\d.,]+)?)\s*м/);
+  if (!match) return null;
+  return match[1].replace(/\s+/g, '').replace(',', '.');
+}
+
+/**
+ * Из строки вида "82" или "20-30" возвращает число — верхнюю границу,
+ * если это диапазон (берём максимум, чтобы не недооценить нужное место).
+ */
+function vehicleCapacityVolumeUpperBound(rawCapacityStr) {
+  if (!rawCapacityStr) return null;
+  const nums = rawCapacityStr
+    .split(/[-–]/)
+    .map((p) => parseFloat(p))
+    .filter((n) => !Number.isNaN(n));
+  if (nums.length === 0) return null;
+  return Math.max(...nums);
+}
+
+// --------------------------------------------------------------
+// Парсинг "cargo_info:cargo_volume": "20.0 т" или "2.84544 т / 84.0 м³"
+// --------------------------------------------------------------
 function parseWeightVolume(cargoVolumeRaw) {
   let weight = null;
   let volume = null;
@@ -240,9 +274,17 @@ async function mapLotToAtiBody(lot) {
   const cargoInfo = lot.cargo_info || {};
   const transport = lot.transport || {};
 
-  const { weight, volume } = parseWeightVolume(cargoInfo['cargo_info:cargo_volume']);
+  const { weight } = parseWeightVolume(cargoInfo['cargo_info:cargo_volume']);
+  const truckModeRaw = transport['transport:truck_mode'] || '';
   const truckKindsRaw = transport['transport:truck_kinds'] || '';
   const bodyTypes = mapBodyTypes(truckKindsRaw);
+
+  // Объём — всегда из вместимости требуемой машины (transport:truck_mode),
+  // а не из объёма самого груза: Atrucks почти никогда не передаёт
+  // реальный объём груза, только вес. Для диапазона ("20-30 м³") берём
+  // верхнюю границу. Это значение уходит и в публикацию на ATI, и в
+  // таблицу — единый источник, без рассинхрона.
+  const volume = vehicleCapacityVolumeUpperBound(parseVehicleCapacityVolume(truckModeRaw));
 
   const startPrice = Number(lot.start_price) || 0;
   const isRateRequest = !startPrice || startPrice <= 0;
