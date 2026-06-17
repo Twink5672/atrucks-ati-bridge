@@ -23,11 +23,21 @@ db.exec(`
     ati_cargo_id  TEXT,
     logist_token  TEXT,
     modified      REAL,
+    logic_version INTEGER DEFAULT 0,
     first_seen_at TEXT DEFAULT (datetime('now')),
     last_seen_at  TEXT DEFAULT (datetime('now')),
     last_synced_at TEXT
   );
 `);
+
+// Миграция для баз, созданных до появления logic_version (ALTER TABLE
+// ADD COLUMN IF NOT EXISTS не поддерживается стандартным SQLite —
+// просто пробуем и игнорируем ошибку, если колонка уже есть).
+try {
+  db.exec('ALTER TABLE mapping ADD COLUMN logic_version INTEGER DEFAULT 0;');
+} catch (err) {
+  // колонка уже существует — это нормально
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS city_cache (
@@ -40,13 +50,14 @@ db.exec(`
 const stmts = {
   get: db.prepare('SELECT * FROM mapping WHERE ext_id = ?'),
   upsert: db.prepare(`
-    INSERT INTO mapping (ext_id, atrucks_id, ati_cargo_id, logist_token, modified, last_seen_at, last_synced_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    INSERT INTO mapping (ext_id, atrucks_id, ati_cargo_id, logist_token, modified, logic_version, last_seen_at, last_synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     ON CONFLICT(ext_id) DO UPDATE SET
       atrucks_id = excluded.atrucks_id,
       ati_cargo_id = excluded.ati_cargo_id,
       logist_token = excluded.logist_token,
       modified = excluded.modified,
+      logic_version = excluded.logic_version,
       last_seen_at = datetime('now'),
       last_synced_at = datetime('now')
   `),
@@ -64,8 +75,8 @@ function getMapping(extId) {
   return stmts.get.get(extId);
 }
 
-function upsertMapping({ ext_id, atrucks_id, ati_cargo_id, logist_token, modified }) {
-  stmts.upsert.run(ext_id, atrucks_id, ati_cargo_id, logist_token || null, modified);
+function upsertMapping({ ext_id, atrucks_id, ati_cargo_id, logist_token, modified, logic_version }) {
+  stmts.upsert.run(ext_id, atrucks_id, ati_cargo_id, logist_token || null, modified, logic_version || 0);
 }
 
 function deleteMapping(extId) {
