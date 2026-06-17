@@ -200,11 +200,20 @@ async function mapLotToAtiBody(lot) {
   const isRateRequest = !startPrice || startPrice <= 0;
 
   // start_price на Atrucks — сумма с НДС 22%.
-  // Без НДС = start_price / 1.22, затем скидка (см. config.pricing.factor).
+  // Ставка клиента (как она есть на Atrucks, без скидки):
+  const clientRateNoVat = isRateRequest
+    ? null
+    : Math.round(startPrice / config.pricing.vatDivider);
+  const clientRateWithVat = isRateRequest ? null : Math.round(startPrice);
+
+  // Ставка перевозчика (со скидкой, см. config.pricing.factor) — то,
+  // что в итоге публикуется на ATI:
   const rate = isRateRequest
     ? null
-    : Math.round((startPrice / config.pricing.vatDivider) * config.pricing.factor);
+    : Math.round(clientRateNoVat * config.pricing.factor);
   const rateWithVat = isRateRequest ? null : Math.round(rate * config.pricing.vatDivider);
+
+  const margin = isRateRequest ? null : clientRateNoVat - rate;
 
   const cargoName = cargoInfo['cargo_info:cargo_kind'] || 'Груз';
 
@@ -289,12 +298,16 @@ async function mapLotToAtiBody(lot) {
     body,
     meta: {
       clientName,
+      atrucksInternalNumber: lot.id,
       originCity,
       destinationCity,
       fromCityId,
       toCityId,
       rate,
       rateWithVat,
+      clientRateNoVat,
+      clientRateWithVat,
+      margin,
       bodyTypes,
       weight,
       volume,
@@ -302,14 +315,18 @@ async function mapLotToAtiBody(lot) {
       unloadIso,
       // Поля для отображения в таблице (человекочитаемые, не city_id)
       display: {
+        internalNumber: lot.id,
         from: origin,
         to: destination,
         cargoName,
         weight,
         volume,
         bodyTypeText: truckKindsRaw || '—',
-        rateNoVat: rate,
-        rateWithVat,
+        clientRateNoVat,
+        clientRateWithVat,
+        carrierRateNoVat: rate,
+        carrierRateWithVat: rateWithVat,
+        margin,
         loadDate: lot.load_range || '',
         unloadDate: lot.unload_range || '',
       },
