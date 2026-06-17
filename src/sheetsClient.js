@@ -92,9 +92,11 @@ function getSheetsApi() {
 }
 
 /**
- * Убеждается, что для каждого имени из tabNames есть вкладка в таблице.
- * Недостающие создаёт, ставит заголовок (A1:U1) и формулу подбора
- * логиста (D2).
+ * Убеждается, что для каждого имени из tabNames есть вкладка в таблице,
+ * и что на ней проставлены заголовок (A1:U1) и формула подбора логиста
+ * (D2). Чинит это не только для новых вкладок, но и для уже
+ * существующих, если там вдруг пусто (например, вкладка была создана
+ * вручную или осталась от старой версии).
  * @param {string[]} tabNames
  * @returns {Promise<Map<string, number>>} название вкладки -> sheetId
  */
@@ -111,38 +113,63 @@ async function ensureTabs(tabNames) {
   );
 
   const missing = tabNames.filter((name) => !existing.has(name));
-  if (missing.length === 0) return existing;
 
-  const addRequests = missing.map((title) => ({ addSheet: { properties: { title } } }));
-  const addRes = await sheets.spreadsheets.batchUpdate({
+  if (missing.length > 0) {
+    const addRequests = missing.map((title) => ({ addSheet: { properties: { title } } }));
+    const addRes = await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: addRequests },
+    });
+    addRes.data.replies.forEach((reply, i) => {
+      existing.set(missing[i], reply.addSheet.properties.sheetId);
+    });
+  }
+
+  // Проверяем шапку (A1) и формулу (D2) на ВСЕХ нужных вкладках, не
+  // только на только что созданных — чинит вкладки, оставшиеся пустыми
+  // по любой другой причине.
+  const checkRanges = tabNames.map((title) => `'${title}'!A1:D2`);
+  const checkRes = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
-    requestBody: { requests: addRequests },
-  });
-  addRes.data.replies.forEach((reply, i) => {
-    existing.set(missing[i], reply.addSheet.properties.sheetId);
+    ranges: checkRanges,
   });
 
-  const headerData = missing.map((title) => ({
-    range: `'${title}'!A1:U1`,
-    values: [HEADER_ROW],
-  }));
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: { valueInputOption: 'RAW', data: headerData },
+  const needsHeader = [];
+  const needsFormula = [];
+  (checkRes.data.valueRanges || []).forEach((valueRange, idx) => {
+    const title = tabNames[idx];
+    const values = valueRange.values || [];
+    const a1 = values[0] && values[0][0];
+    const d2 = values[1] && values[1][3];
+    if (!a1) needsHeader.push(title);
+    if (!d2) needsFormula.push(title);
   });
 
-  const formulaData = missing.map((title) => ({
-    range: `'${title}'!D2`,
-    values: [
-      [
-        `=ARRAYFORMULA(IF(C2:C="", "", IFERROR(VLOOKUP(C2:C, '${logistsSheetName}'!A:D, 2, FALSE), "не найден")))`,
+  if (needsHeader.length > 0) {
+    const headerData = needsHeader.map((title) => ({
+      range: `'${title}'!A1:U1`,
+      values: [HEADER_ROW],
+    }));
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'RAW', data: headerData },
+    });
+  }
+
+  if (needsFormula.length > 0) {
+    const formulaData = needsFormula.map((title) => ({
+      range: `'${title}'!D2`,
+      values: [
+        [
+          `=ARRAYFORMULA(IF(C2:C="", "", IFERROR(VLOOKUP(C2:C, '${logistsSheetName}'!A:D, 2, FALSE), "не найден")))`,
+        ],
       ],
-    ],
-  }));
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: { valueInputOption: 'USER_ENTERED', data: formulaData },
-  });
+    }));
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'USER_ENTERED', data: formulaData },
+    });
+  }
 
   return existing;
 }
