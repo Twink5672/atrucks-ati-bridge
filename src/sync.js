@@ -194,8 +194,13 @@ async function syncOnce() {
   }
 
   // --- Уборка лотов, пропавших с Atrucks ---
+  // Важно: не трогаем строки других площадок (например, Express
+  // Isource — их ext_id начинается с config.express.extIdPrefix),
+  // у них своя проверка в своём собственном цикле синхронизации.
   const seenSet = new Set(seenExtIds);
-  const staleEntries = [...lotsIndex.byExtId.entries()].filter(([extId]) => !seenSet.has(extId));
+  const staleEntries = [...lotsIndex.byExtId.entries()].filter(
+    ([extId]) => !extId.startsWith(config.express.extIdPrefix) && !seenSet.has(extId)
+  );
 
   log(`Исчезло с Atrucks лотов (есть в таблице, нет в выдаче): ${staleEntries.length}`);
 
