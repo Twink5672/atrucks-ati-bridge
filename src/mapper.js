@@ -427,6 +427,7 @@ async function mapLotToAtiBody(lot) {
 module.exports = {
   mapLotToAtiBody,
   mapBodyTypes,
+  describeBodyTypes,
   parseWeightVolume,
   parseDateRangeToIso,
   extractCityName,
