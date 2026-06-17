@@ -33,7 +33,12 @@ async function fetchAllOrders() {
         'Content-Type': 'application/json',
         Cookie: cookie,
         'X-Auth-Token': csrfToken,
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+        Referer: `${baseUrl}/order/list/offers`,
       },
+    }).catch((err) => {
+      throw new Error(`Сетевая ошибка запроса к Express Isource: ${err.message}${err.cause ? ` (cause: ${err.cause})` : ''}`);
     });
 
     if (!res.ok) {
