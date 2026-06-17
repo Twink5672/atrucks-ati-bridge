@@ -24,6 +24,7 @@ const atrucks = require('./atrucksClient');
 const ati = require('./atiClient');
 const db = require('./db');
 const sheets = require('./sheetsClient');
+const config = require('./config');
 const { mapLotToAtiBody } = require('./mapper');
 const { resolveCompanyName } = require('./companyNames');
 
@@ -119,7 +120,12 @@ async function syncOnce() {
     const existingEntry = lotsIndex.byExtId.get(String(extId));
     const sameTabAsBefore = Boolean(existingEntry) && existingEntry.tabName === targetTab;
 
-    if (existingDb && existingDb.modified === lot.modified && sameTabAsBefore) {
+    if (
+      existingDb &&
+      existingDb.modified === lot.modified &&
+      existingDb.logic_version === config.mapperLogicVersion &&
+      sameTabAsBefore
+    ) {
       stats.skippedNoChange += 1;
       continue;
     }
@@ -172,6 +178,7 @@ async function syncOnce() {
       ati_cargo_id: null,
       logist_token: null,
       modified: lot.modified,
+      logic_version: config.mapperLogicVersion,
     });
   }
 
