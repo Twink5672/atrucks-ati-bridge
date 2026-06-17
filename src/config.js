@@ -58,6 +58,18 @@ module.exports = {
     // Префикс ext_id для строк с этой площадки — чтобы цикл синхронизации
     // Atrucks не путал и не удалял строки, пришедшие с Express, и наоборот.
     extIdPrefix: 'express:',
+    // express.isource.ru блокирует подключения с датацентровых IP (любых,
+    // включая российские VPS — проверено) — нужен либо резидентный
+    // прокси, либо relay-сервер на машине с обычным интернетом.
+    // Формат proxyUrl: http://user:pass@host:port или http://host:port
+    proxyUrl: process.env.EXPRESS_PROXY_URL || '',
+    // RELAY — основной рабочий способ (см. expressRelayServer.js):
+    // адрес relay-сервера, запущенного на домашнем/офисном компьютере,
+    // доступный снаружи через туннель (например, Tailscale Funnel).
+    relayUrl: process.env.EXPRESS_RELAY_URL || '',
+    // Общий секрет между Railway и relay-сервером — защищает relay от
+    // посторонних запросов, если кто-то узнает публичный URL туннеля.
+    relaySecret: process.env.EXPRESS_RELAY_SECRET || '',
   },
 
   // --- ATI.SU ---
