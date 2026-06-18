@@ -162,7 +162,7 @@ async function ensureTabs(tabNames) {
       range: `'${title}'!D2`,
       values: [
         [
-          `=ARRAYFORMULA(IF(C2:C="", "", IFERROR(VLOOKUP(C2:C, '${logistsSheetName}'!A:D, 2, FALSE), "не найден")))`,
+          `=ARRAYFORMULA(IF(C2:C="";"";IFERROR(VLOOKUP(C2:C;'${logistsSheetName}'!A:D;2;FALSE);"не найден")))`,
         ],
       ],
     }));
