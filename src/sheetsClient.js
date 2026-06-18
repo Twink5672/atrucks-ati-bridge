@@ -141,8 +141,9 @@ async function ensureTabs(tabNames) {
     const values = valueRange.values || [];
     const a1 = values[0] && values[0][0];
     const d2 = values[1] && values[1][3];
+    const d2IsBroken = !d2 || String(d2).trim().startsWith('#');
     if (!a1) needsHeader.push(title);
-    if (!d2) needsFormula.push(title);
+    if (d2IsBroken) needsFormula.push(title);
   });
 
   if (needsHeader.length > 0) {
