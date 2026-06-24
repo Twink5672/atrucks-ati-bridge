@@ -139,6 +139,25 @@ async function syncOnce() {
       continue;
     }
 
+    // Пересчёт ставки перевозчика и маржи с учётом индивидуального
+    // коэффициента логиста (колонка E листа "Логисты"). Если коэффициент
+    // совпадает с глобальным дефолтом — пересчёт ничего не меняет.
+    const pricingFactor = logistEntry ? logistEntry.pricingFactor : config.pricing.factor;
+    const clientRateNoVat = mapped.meta.display.clientRateNoVat;
+    const vatRate = config.pricing.vatDivider;
+    let { carrierRateNoVat, carrierRateWithVat, margin } = mapped.meta.display;
+    if (clientRateNoVat != null && pricingFactor !== config.pricing.factor) {
+      carrierRateNoVat = Math.round(clientRateNoVat * pricingFactor);
+      carrierRateWithVat = Math.round(carrierRateNoVat * vatRate);
+      margin = clientRateNoVat - carrierRateNoVat;
+      // Обновляем и тело запроса ATI (payment.rate_without_vat / rate_with_vat)
+      const payment = mapped.body.cargo_application.payment;
+      if (payment && payment.type === 'with-bargaining') {
+        payment.rate_without_vat = carrierRateNoVat;
+        payment.rate_with_vat = carrierRateWithVat;
+      }
+    }
+
     // Логист сменился — старую строку на прежней вкладке убираем
     if (existingEntry && !sameTabAsBefore) {
       rowsToDelete.push({ tabName: existingEntry.tabName, rowNumber: existingEntry.rowNumber });
@@ -164,9 +183,9 @@ async function syncOnce() {
       bodyTypeText: mapped.meta.display.bodyTypeText,
       clientRateNoVat: mapped.meta.display.clientRateNoVat,
       clientRateWithVat: mapped.meta.display.clientRateWithVat,
-      carrierRateNoVat: mapped.meta.display.carrierRateNoVat,
-      carrierRateWithVat: mapped.meta.display.carrierRateWithVat,
-      margin: mapped.meta.display.margin,
+      carrierRateNoVat,
+      carrierRateWithVat,
+      margin,
       loadDate: mapped.meta.display.loadDate,
       unloadDate: mapped.meta.display.unloadDate,
       bodyJson: JSON.stringify(mapped.body),
