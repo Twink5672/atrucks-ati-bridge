@@ -38,7 +38,7 @@
 const { google } = require('googleapis');
 const config = require('./config');
 
-const LOGISTS_RANGE = (sheet) => `'${sheet}'!A2:D`;
+const LOGISTS_RANGE = (sheet) => `'${sheet}'!A2:E`;
 
 // Индексы в массиве значений строки (0-based), одинаковы на всех вкладках
 const IDX = {
@@ -233,10 +233,19 @@ async function readLogistsMap() {
   rows.forEach((row) => {
     const clientName = (row[0] || '').trim();
     if (!clientName) return;
+    // Колонка E — индивидуальный коэффициент ставки перевозчика
+    // (например, 0.95 = скидка 5%, 0.85 = скидка 15%).
+    // Если не задана или не число — используется дефолт из config.
+    const rawCoeff = row[4] ? String(row[4]).trim().replace(',', '.') : '';
+    const parsedCoeff = rawCoeff ? parseFloat(rawCoeff) : NaN;
+    const pricingFactor = !Number.isNaN(parsedCoeff) && parsedCoeff > 0 && parsedCoeff <= 1
+      ? parsedCoeff
+      : config.pricing.factor;
     map.set(clientName, {
       logistName: (row[1] || '').trim(),
       token: row[2] || '',
       contactId: row[3] || '',
+      pricingFactor,
     });
   });
 
