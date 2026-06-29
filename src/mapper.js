@@ -169,14 +169,14 @@ function parseWeightVolume(cargoVolumeRaw) {
 
   const text = cargoVolumeRaw.replace(/\u202f/g, ' '); // неразрывный узкий пробел
 
-  const weightMatch = text.match(/([\d.,]+)\s*т/);
+ const weightMatch = text.match(/([\d.,]+)\s*т/);
   if (weightMatch) {
-    weight = parseFloat(weightMatch[1].replace(',', '.'));
+    weight = Math.round(parseFloat(weightMatch[1].replace(',', '.')) * 1000) / 1000;
   }
 
   const volumeMatch = text.match(/([\d.,]+)\s*м/);
   if (volumeMatch) {
-    volume = parseFloat(volumeMatch[1].replace(',', '.'));
+    volume = Math.round(parseFloat(volumeMatch[1].replace(',', '.')) * 1000) / 1000;
   }
 
   return { weight, volume };
