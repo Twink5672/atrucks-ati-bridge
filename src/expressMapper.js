@@ -1,15 +1,5 @@
 // ============================================================
 // Маппинг тендера Express Isource -> тело запроса ATI /v2/cargos
-//
-// Зеркалит контракт src/mapper.js (Atrucks): возвращает { body, meta },
-// где meta.display — человекочитаемые поля для строки в таблице.
-// Переиспользует resolveCityId (atiCities.js) и mapBodyTypes/
-// describeBodyTypes (mapper.js) — общая логика, без дублирования.
-//
-// Важное отличие от Atrucks: это активный аукцион на понижение
-// (status TRADE), а не статичный груз. Ставка (noVatPrice/vatPrice)
-// будет дальше снижаться до tradeCloseAt. По решению, принятому ранее,
-// публикуем сразу при появлении лота, не дожидаясь результатов торгов.
 // ============================================================
 
 const config = require('./config');
@@ -32,6 +22,17 @@ function formatDisplayDate(raw) {
   if (!match) return raw;
   const [, yyyy, mm, dd, hh, min] = match;
   return `${dd}.${mm}.${yyyy} ${hh}:${min}`;
+}
+
+/**
+ * Парсит числовое значение из поля, которое может быть числом,
+ * строкой с единицей ("3.5 т") или нулём. Возвращает null если
+ * значение отсутствует, нулевое или непарсируемое — ATI не принимает 0.
+ */
+function parsePositiveNumber(val) {
+  if (val == null) return null;
+  const n = typeof val === 'number' ? val : parseFloat(String(val).replace(',', '.'));
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 async function mapOrderToAtiBody(order) {
@@ -67,17 +68,19 @@ async function mapOrderToAtiBody(order) {
   const loadIso = parseLocalDateTimeToIso(start.localStartAt);
   const unloadIso = parseLocalDateTimeToIso(end.localFinishAt);
 
-  const weight = cargo.weight ?? null;
-  // Объём — реальный объём груза, если есть; иначе вместимость
-  // требуемой машины как ориентир (тот же принцип, что и для Atrucks).
-  const volume = cargo.volume ?? (vehicle.vehicleCategory && vehicle.vehicleCategory.volume) ?? null;
+  // Вес и объём — только положительные числа; 0 и строки с "т"/"м³"
+  // не принимаются ATI и отфильтровываются здесь (не отправляем поле
+  // вообще, если нет корректного значения).
+  const weight = parsePositiveNumber(cargo.weight);
+  const volume = parsePositiveNumber(cargo.volume)
+    ?? parsePositiveNumber(vehicle.vehicleCategory && vehicle.vehicleCategory.volume);
 
   const truckKindName = carcass.name || '';
   const bodyTypes = mapBodyTypes(truckKindName);
 
   const cargoName = cargo.cargoType || 'Груз';
 
-  const vatRate = (order.vat || 22) / 100 + 1; // например 1.22
+  const vatRate = (order.vat || 22) / 100 + 1;
 
   const clientRateNoVat = order.noVatPrice != null ? Math.round(order.noVatPrice) : null;
   const clientRateWithVat = order.vatPrice != null ? Math.round(order.vatPrice) : null;
@@ -97,8 +100,6 @@ async function mapOrderToAtiBody(order) {
   const unloadingLocation = { type: 'manual', city_id: toCityId };
   if (needsAddress(destinationCity)) unloadingLocation.address = end.address;
 
-  // contacts/boards с конкретным логистом подставляются в Apps Script
-  // перед публикацией — так же, как для Atrucks.
   const body = {
     cargo_application: {
       route: {
