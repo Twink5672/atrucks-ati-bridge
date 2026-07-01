@@ -43,10 +43,16 @@ async function mapOrderToAtiBody(order) {
   const start = route.routePointStart || {};
   const end = route.routePointEnd || {};
 
-  const clientName = start.consignCompany || `Express, заказ ${order.id}`;
+  // Все тендеры на Express размещены одним заказчиком —
+  // ООО "Газпромнефть-Снабжение". Название фиксированное.
+  const clientName = 'ООО "Газпромнефть-Снабжение"';
 
   const originCity = (start.city && start.city.name) || null;
-  const destinationCity = (end.city && end.city.name) || null;
+  // У точки выгрузки city может быть null — тогда пробуем взять
+  // первую часть адреса до запятой как название города/региона.
+  const destinationCity = (end.city && end.city.name)
+    || (end.address ? end.address.split(',')[0].trim() : null)
+    || null;
 
   if (!originCity || !destinationCity) {
     throw new Error(
