@@ -68,10 +68,11 @@ async function mapOrderToAtiBody(order) {
   const loadIso = parseLocalDateTimeToIso(start.localStartAt);
   const unloadIso = parseLocalDateTimeToIso(end.localFinishAt);
 
-  // Вес и объём — только положительные числа; 0 и строки с "т"/"м³"
-  // не принимаются ATI и отфильтровываются здесь (не отправляем поле
-  // вообще, если нет корректного значения).
-  const weight = parsePositiveNumber(cargo.weight);
+  // Вес у Express приходит в КИЛОГРАММАХ, а ATI ожидает ТОННЫ.
+  // Делим на 1000. Объём — в м³, без пересчёта.
+  // parsePositiveNumber фильтрует нули и строки с единицами измерения.
+  const weightKg = parsePositiveNumber(cargo.weight);
+  const weight = weightKg != null ? Math.round(weightKg / 1000 * 100) / 100 : null;
   const volume = parsePositiveNumber(cargo.volume)
     ?? parsePositiveNumber(vehicle.vehicleCategory && vehicle.vehicleCategory.volume);
 
