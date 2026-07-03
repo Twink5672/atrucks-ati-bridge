@@ -173,6 +173,7 @@ async function syncExpressOnce() {
       margin,
       loadDate: mapped.meta.display.loadDate,
       unloadDate: mapped.meta.display.unloadDate,
+      tradeCloseAt: mapped.meta.display.tradeCloseAt ?? '',
       bodyJson: JSON.stringify(mapped.body),
     });
 
