@@ -43,8 +43,8 @@ const LOGISTS_RANGE = (sheet) => `'${sheet}'!A2:E`;
 // Индексы в массиве значений строки (0-based), одинаковы на всех вкладках
 const IDX = {
   CLIENT: 2, // C
-  ATI_CARGO_ID: 17, // R
-  EXT_ID: 20, // U
+  ATI_CARGO_ID: 18, // S
+  EXT_ID: 21, // V
 };
 
 const HEADER_ROW = [
@@ -56,6 +56,7 @@ const HEADER_ROW = [
   'Дата погрузки',
   'Куда',
   'Дата выгрузки',
+  'Торги до',
   'Груз',
   'Вес',
   'Объём',
@@ -288,13 +289,14 @@ async function writeLots(lots) {
       values: [[lot.internalNumber ?? '', lot.clientName]],
     });
     data.push({
-      range: `'${sheet}'!E${row}:L${row}`,
+      range: `'${sheet}'!E${row}:M${row}`,
       values: [
         [
           lot.from,
           lot.loadDate ?? '',
           lot.to,
           lot.unloadDate ?? '',
+          lot.tradeCloseAt ?? '',
           lot.cargoName,
           lot.weight ?? '',
           lot.volume ?? '',
@@ -303,7 +305,7 @@ async function writeLots(lots) {
       ],
     });
     data.push({
-      range: `'${sheet}'!M${row}:Q${row}`,
+      range: `'${sheet}'!N${row}:R${row}`,
       values: [
         [
           lot.clientRateNoVat ?? '',
@@ -315,7 +317,7 @@ async function writeLots(lots) {
       ],
     });
     data.push({
-      range: `'${sheet}'!S${row}:U${row}`,
+      range: `'${sheet}'!T${row}:V${row}`,
       values: [[lot.bodyJson, updatedAt, lot.extId]],
     });
   }
