@@ -18,10 +18,10 @@ function parseLocalDateTimeToIso(raw) {
 
 function formatDisplayDate(raw) {
   if (!raw) return '';
-  const match = raw.trim().match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+  const match = raw.trim().match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
   if (!match) return raw;
-  const [, yyyy, mm, dd, hh, min] = match;
-  return `${dd}.${mm}.${yyyy} ${hh}:${min}`;
+  const [, yyyy, mm, dd, hh, min, sec] = match;
+  return `${dd}.${mm}.${yyyy} ${hh}:${min}:${sec}`;
 }
 
 /**
@@ -165,6 +165,7 @@ async function mapOrderToAtiBody(order) {
         margin,
         loadDate: formatDisplayDate(start.localStartAt),
         unloadDate: formatDisplayDate(end.localFinishAt),
+        tradeCloseAt: formatDisplayDate(order.tradeCloseAt),
       },
     },
   };
