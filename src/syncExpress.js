@@ -174,6 +174,8 @@ async function syncExpressOnce() {
       loadDate: mapped.meta.display.loadDate,
       unloadDate: mapped.meta.display.unloadDate,
       tradeCloseAt: mapped.meta.display.tradeCloseAt ?? '',
+      competitor: mapped.meta.display.competitor ?? '',
+      competitorRate: mapped.meta.display.competitorRate ?? '',
       bodyJson: JSON.stringify(mapped.body),
     });
 
