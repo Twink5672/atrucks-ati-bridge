@@ -166,6 +166,10 @@ async function mapOrderToAtiBody(order) {
         loadDate: formatDisplayDate(start.localStartAt),
         unloadDate: formatDisplayDate(end.localFinishAt),
         tradeCloseAt: formatDisplayDate(order.tradeCloseAt),
+        competitor: order.lastOffer
+          ? (order.lastOffer.contractor && order.lastOffer.contractor.name) || ''
+          : '',
+        competitorRate: order.lastOffer ? (order.lastOffer.noVatPrice ?? '') : '',
       },
     },
   };
