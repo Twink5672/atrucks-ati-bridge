@@ -83,19 +83,7 @@ async function fetchAllOrdersDirect() {
     throw new Error('Не заданы EXPRESS_COOKIE / EXPRESS_CSRF_TOKEN');
   }
 
-  const limit = 50;
-  let offset = 0;
-  let totalCount = Infinity;
-  const all = [];
-
-  while (offset < totalCount) {
-    const url =
-      `${baseUrl}/api/v1/orderRequest/items?filter%5BcreateDateLimit%5D=PERIOD&limit=${limit}` +
-      `&offset=${offset}&filter%5BtabStatus%5D%5B%5D=TRADE`;
-
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
+  const headers = {
         Accept: '*/*',
         'Accept-Encoding': 'gzip, deflate, br, zstd',
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -111,7 +99,21 @@ async function fetchAllOrdersDirect() {
         'User-Agent':
           'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
         'X-Auth-Token': csrfToken,
-      },
+      };
+
+  const limit = 50;
+  let offset = 0;
+  let totalCount = Infinity;
+  const all = [];
+
+  while (offset < totalCount) {
+    const url =
+      `${baseUrl}/api/v1/orderRequest/items?filter%5BcreateDateLimit%5D=PERIOD&limit=${limit}` +
+      `&offset=${offset}&filter%5BtabStatus%5D%5B%5D=TRADE`;
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers,
       ...(proxyAgent ? { dispatcher: proxyAgent } : {}),
     }).catch((err) => {
       const proxyNote = proxyUrl ? ' (через прокси)' : ' (без прокси)';
@@ -131,7 +133,51 @@ async function fetchAllOrdersDirect() {
     offset += limit;
   }
 
-  return all;
+  return enrichOrdersWithCompetitors(all, headers, proxyAgent);
+}
+
+/**
+ * Получает детали одного тендера по ID — там contractor виден полностью,
+ * в отличие от списочного эндпоинта /items где contractor скрыт.
+ */
+async function fetchOrderDetail(orderId, headers, proxyAgent) {
+  const { baseUrl } = config.express;
+  const res = await fetch(`${baseUrl}/api/v1/orderRequest/${orderId}`, {
+    method: 'GET',
+    headers,
+    ...(proxyAgent ? { dispatcher: proxyAgent } : {}),
+  }).catch(() => null);
+
+  if (!res || !res.ok) return null;
+  return res.json().catch(() => null);
+}
+
+/**
+ * Для тендеров у которых есть lastOffer но скрыт contractor —
+ * запрашивает детальный эндпоинт и подставляет имя конкурента.
+ * Запросы идут параллельно пачками по 5 чтобы не перегружать сервер.
+ */
+async function enrichOrdersWithCompetitors(orders, headers, proxyAgent) {
+  const needDetail = orders.filter(
+    (o) => o.lastOffer && (!o.lastOffer.contractor || !o.lastOffer.contractor.name)
+  );
+
+  if (needDetail.length === 0) return orders;
+
+  const CHUNK = 5;
+  for (let i = 0; i < needDetail.length; i += CHUNK) {
+    const chunk = needDetail.slice(i, i + CHUNK);
+    await Promise.all(
+      chunk.map(async (order) => {
+        const detail = await fetchOrderDetail(order.id, headers, proxyAgent);
+        if (detail && detail.lastOffer && detail.lastOffer.contractor) {
+          order.lastOffer.contractor = detail.lastOffer.contractor;
+        }
+      })
+    );
+  }
+
+  return orders;
 }
 
 module.exports = { fetchAllOrders };
