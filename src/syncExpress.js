@@ -21,6 +21,18 @@ const config = require('./config');
 const { mapOrderToAtiBody, EXT_ID_PREFIX } = require('./expressMapper');
 
 const FALLBACK_TAB = process.env.FALLBACK_TAB_NAME || 'Без логиста';
+// Спецправило: рейсы клиента ООО "Газпромнефть-Снабжение" с типом
+// кузова "Трал" всегда идут на этот отдельный лист — вместо обычной
+// вкладки логиста (не по справочнику "Логисты").
+const GPNS_TRAL_TAB = 'Газпромнефть-Снабжение Трал';
+const GPNS_CLIENT_MARKER = 'Газпромнефть-Снабжение';
+
+function resolveTargetTab(clientName, bodyTypeText, logistEntry) {
+  const isGpnsTral =
+    clientName.includes(GPNS_CLIENT_MARKER) && /трал/i.test(bodyTypeText || '');
+  if (isGpnsTral) return GPNS_TRAL_TAB;
+  return logistEntry && logistEntry.logistName ? logistEntry.logistName : FALLBACK_TAB;
+}
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [Express] ${msg}`);
@@ -47,7 +59,7 @@ async function syncExpressOnce() {
     return { error: err.message };
   }
 
-  const requiredTabs = new Set([FALLBACK_TAB]);
+  const requiredTabs = new Set([FALLBACK_TAB, GPNS_TRAL_TAB]);
   for (const entry of logistsMap.values()) {
     if (entry.logistName) requiredTabs.add(entry.logistName);
   }
@@ -100,11 +112,15 @@ async function syncExpressOnce() {
     // Дешёвая проверка "не менялось" — но логист мог поменяться в
     // "Логисты" даже если сам тендер не изменился, поэтому всё равно
     // перепроверяем ожидаемую вкладку по уже сохранённому клиенту.
+    // Для клиентов Газпромнефть-Снабжение шорткат пропускаем — тип
+    // кузова (для правила GPNS+Трал) в индексе не хранится, известен
+    // только после повторного маппинга.
     if (
       existingDb &&
       existingDb.modified === modifiedMarker &&
       existingDb.logic_version === config.mapperLogicVersion &&
-      sameTabAsBefore
+      sameTabAsBefore &&
+      !existingEntry.clientName.includes(GPNS_CLIENT_MARKER)
     ) {
       const logistEntry = logistsMap.get(existingEntry.clientName);
       const expectedTab = logistEntry && logistEntry.logistName ? logistEntry.logistName : FALLBACK_TAB;
@@ -124,7 +140,11 @@ async function syncExpressOnce() {
     }
 
     const logistEntry = logistsMap.get(mapped.meta.clientName);
-    const targetTab = logistEntry && logistEntry.logistName ? logistEntry.logistName : FALLBACK_TAB;
+    const targetTab = resolveTargetTab(
+      mapped.meta.clientName,
+      mapped.meta.display.bodyTypeText,
+      logistEntry
+    );
     const sameTabAsTarget = sameTabAsBefore && existingEntry.tabName === targetTab;
 
     if (existingEntry && !sameTabAsTarget) {
