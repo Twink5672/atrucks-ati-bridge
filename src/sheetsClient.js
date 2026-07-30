@@ -388,10 +388,110 @@ async function deleteLotRows(deletions) {
   });
 }
 
+// ============================================================
+// Архив закрытых тендеров (append-only лог — используется для
+// статистики: конкуренты, их ставки, направления по правилу
+// "Газпромнефть-Снабжение + Трал", см. syncExpress.js).
+// ============================================================
+
+const ARCHIVE_HEADER_ROW = [
+  'Дата архивации',
+  'Итог',
+  'Внутренний номер',
+  'Откуда',
+  'Куда',
+  'Дата погрузки',
+  'Дата выгрузки',
+  'Конкурент',
+  'Ставка конкурента',
+  'Груз',
+  'Вес',
+  'Объём',
+  'Тип кузова',
+  'Ставка клиента без НДС',
+  'Ставка клиента с НДС',
+  'Ставка перевозчика без НДС',
+  'Ставка перевозчика с НДС',
+  'Маржа',
+  'ATI_cargo_id',
+  'ext_id',
+];
+
+/**
+ * Создаёт лист-архив с заголовком, если его ещё нет. Ничего не делает,
+ * если лист уже существует (в т.ч. если заголовок кто-то поменял руками —
+ * архив не трогает уже существующие данные).
+ */
+async function ensureArchiveSheet(sheetName) {
+  const sheets = getSheetsApi();
+  const { spreadsheetId } = config.googleSheets;
+
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties',
+  });
+  const exists = meta.data.sheets.some((s) => s.properties.title === sheetName);
+  if (exists) return;
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: { requests: [{ addSheet: { properties: { title: sheetName } } }] },
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${sheetName}'!A1:T1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [ARCHIVE_HEADER_ROW] },
+  });
+}
+
+/**
+ * Дописывает строки в конец листа-архива (создаёт лист при
+ * необходимости). Использует Sheets API values.append — сам находит
+ * первую свободную строку, накопление идёт бесконечно вниз.
+ * @param {string} sheetName
+ * @param {Array<Array<string|number>>} rows — строки в порядке ARCHIVE_HEADER_ROW
+ */
+async function appendArchiveRows(sheetName, rows) {
+  if (rows.length === 0) return;
+
+  await ensureArchiveSheet(sheetName);
+
+  const sheets = getSheetsApi();
+  const { spreadsheetId } = config.googleSheets;
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `'${sheetName}'!A1`,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: rows },
+  });
+}
+
+/**
+ * Читает все значения одной строки (A..X) с рабочей вкладки — нужно
+ * для снятия "снимка" данных лота перед архивацией и удалением строки.
+ */
+async function readRowValues(tabName, rowNumber) {
+  const sheets = getSheetsApi();
+  const { spreadsheetId } = config.googleSheets;
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabName}'!A${rowNumber}:X${rowNumber}`,
+  });
+
+  return (res.data.values && res.data.values[0]) || [];
+}
+
 module.exports = {
   ensureTabs,
   readAllLotsIndex,
   readLogistsMap,
   writeLots,
   deleteLotRows,
+  appendArchiveRows,
+  readRowValues,
 };
