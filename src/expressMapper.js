@@ -85,7 +85,11 @@ async function mapOrderToAtiBody(order) {
   const truckKindName = carcass.name || '';
   const bodyTypes = mapBodyTypes(truckKindName);
 
-  const cargoName = cargo.cargoType || 'Груз';
+  const rawCargoName = cargo.cargoType || 'Груз';
+  // ATI ограничивает поле name 200 символами — у Express в cargoType
+  // иногда приходят длинные описания (размеры, контакты, инструкции).
+  const cargoName =
+    rawCargoName.length > 200 ? `${rawCargoName.slice(0, 197)}...` : rawCargoName;
 
   const vatRate = (order.vat || 22) / 100 + 1;
 
