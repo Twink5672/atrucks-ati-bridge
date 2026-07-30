@@ -107,6 +107,7 @@ async function syncOnce() {
   const seenExtIds = [];
   const toWrite = [];
   const rowsToDelete = [];
+  const mappingErrors = [];
   const nextRowByTab = new Map(
     requiredTabsList.map((t) => [t, (lotsIndex.lastRowByTab.get(t) || 1) + 1])
   );
@@ -154,7 +155,12 @@ async function syncOnce() {
       mapped = await mapLotToAtiBody(lot);
     } catch (err) {
       stats.errors += 1;
-      log(`ОШИБКА маппинга лота ext_id=${extId} (atrucks_id=${lot.id}): ${err.message}`);
+      // Не логируем каждую ошибку отдельной строкой — при 70-160
+      // нераспознанных городах за цикл это заливает лог Railway и
+      // приводит к обрезке сообщений (rate limit), из-за чего
+      // терялись и другие важные строки (например про архивацию).
+      // Собираем в массив, печатаем одной сводной строкой в конце.
+      mappingErrors.push(`ext_id=${extId} (atrucks_id=${lot.id}): ${err.message}`);
       continue;
     }
 
@@ -284,6 +290,12 @@ async function syncOnce() {
       stats.errors += 1;
       log(`ОШИБКА удаления строк из Google Sheets: ${err.message}`);
     }
+  }
+
+  if (mappingErrors.length > 0) {
+    const preview = mappingErrors.slice(0, 5).join(' | ');
+    const more = mappingErrors.length > 5 ? ` ...и ещё ${mappingErrors.length - 5}` : '';
+    log(`ОШИБКИ маппинга лотов (${mappingErrors.length}): ${preview}${more}`);
   }
 
   log(
