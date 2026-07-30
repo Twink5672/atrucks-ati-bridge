@@ -30,6 +30,18 @@ const { resolveCompanyName } = require('./companyNames');
 
 const PILOT_LOGIST_NAME = process.env.PILOT_LOGIST_NAME || null;
 const FALLBACK_TAB = process.env.FALLBACK_TAB_NAME || 'Без логиста';
+// Спецправило: рейсы клиента ООО "Газпромнефть-Снабжение" с типом
+// кузова "Трал" всегда идут на этот отдельный лист — вместо обычной
+// вкладки логиста (не по справочнику "Логисты").
+const GPNS_TRAL_TAB = 'Газпромнефть-Снабжение Трал';
+const GPNS_CLIENT_MARKER = 'Газпромнефть-Снабжение';
+
+function resolveTargetTab(clientName, bodyTypeText, logistEntry) {
+  const isGpnsTral =
+    clientName.includes(GPNS_CLIENT_MARKER) && /трал/i.test(bodyTypeText || '');
+  if (isGpnsTral) return GPNS_TRAL_TAB;
+  return logistEntry && logistEntry.logistName ? logistEntry.logistName : FALLBACK_TAB;
+}
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -60,7 +72,7 @@ async function syncOnce() {
   }
 
   // Набор нужных вкладок: уникальные логисты из справочника + корзина
-  const requiredTabs = new Set([FALLBACK_TAB]);
+  const requiredTabs = new Set([FALLBACK_TAB, GPNS_TRAL_TAB]);
   for (const entry of logistsMap.values()) {
     if (entry.logistName) requiredTabs.add(entry.logistName);
   }
@@ -109,22 +121,29 @@ async function syncOnce() {
 
     const clientName = resolveCompanyName(lot.company_id);
     const logistEntry = logistsMap.get(clientName);
-    const targetTab = logistEntry && logistEntry.logistName ? logistEntry.logistName : FALLBACK_TAB;
+    const isGpnsCandidate = clientName.includes(GPNS_CLIENT_MARKER);
+    // Предварительная вкладка (без учёта правила "Трал" — тип кузова
+    // известен только после маппинга) — нужна для фильтра пилота и
+    // дешёвой проверки "не менялось".
+    const preliminaryTab = logistEntry && logistEntry.logistName ? logistEntry.logistName : FALLBACK_TAB;
 
-    if (PILOT_LOGIST_NAME && targetTab !== PILOT_LOGIST_NAME) {
+    if (PILOT_LOGIST_NAME && preliminaryTab !== PILOT_LOGIST_NAME && !isGpnsCandidate) {
       stats.skippedNotPilot += 1;
       continue;
     }
 
     const existingDb = db.getMapping(extId);
     const existingEntry = lotsIndex.byExtId.get(String(extId));
-    const sameTabAsBefore = Boolean(existingEntry) && existingEntry.tabName === targetTab;
+    const sameTabAsPreliminary = Boolean(existingEntry) && existingEntry.tabName === preliminaryTab;
 
+    // Для клиентов Газпромнефть-Снабжение шорткат пропускаем — тип
+    // кузова (для правила GPNS+Трал) известен только после маппинга.
     if (
       existingDb &&
       existingDb.modified === lot.modified &&
       existingDb.logic_version === config.mapperLogicVersion &&
-      sameTabAsBefore
+      sameTabAsPreliminary &&
+      !isGpnsCandidate
     ) {
       stats.skippedNoChange += 1;
       continue;
@@ -138,6 +157,9 @@ async function syncOnce() {
       log(`ОШИБКА маппинга лота ext_id=${extId} (atrucks_id=${lot.id}): ${err.message}`);
       continue;
     }
+
+    const targetTab = resolveTargetTab(clientName, mapped.meta.display.bodyTypeText, logistEntry);
+    const sameTabAsBefore = Boolean(existingEntry) && existingEntry.tabName === targetTab;
 
     // Пересчёт ставки перевозчика и маржи с учётом индивидуального
     // коэффициента логиста (колонка E листа "Логисты"). Если коэффициент
