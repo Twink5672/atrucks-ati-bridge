@@ -33,7 +33,7 @@ module.exports = {
   // При следующей синхронизации ВСЕ лоты будут пересчитаны и
   // перезаписаны заново, даже если на Atrucks они не менялись —
   // не нужно вручную чистить вкладки после каждого такого изменения.
-  mapperLogicVersion: 7,
+  mapperLogicVersion: 8,
 
   // --- Atrucks ---
   atrucks: {
@@ -70,6 +70,15 @@ module.exports = {
     // Общий секрет между Railway и relay-сервером — защищает relay от
     // посторонних запросов, если кто-то узнает публичный URL туннеля.
     relaySecret: process.env.EXPRESS_RELAY_SECRET || '',
+  },
+
+  // --- MAX (мессенджер) ---
+  // Уведомления о новых рейсах Газпромнефть-Снабжение + Трал.
+  // Токен — через @MasterBot в MAX (/create). chat_id — см. README
+  // (GET /updates после добавления бота в нужный чат).
+  max: {
+    botToken: process.env.MAX_BOT_TOKEN || '',
+    chatId: process.env.MAX_CHAT_ID || '',
   },
 
   // --- ATI.SU ---
