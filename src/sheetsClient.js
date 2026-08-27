@@ -96,7 +96,7 @@ function getSheetsApi() {
 
 /**
  * Убеждается, что для каждого имени из tabNames есть вкладка в таблице,
- * и что на ней проставлены заголовок (A1:U1) и формула подбора логиста
+ * и что на ней проставлены заголовок (A1:X1) и формула подбора логиста
  * (D2). Чинит это не только для новых вкладок, но и для уже
  * существующих, если там вдруг пусто (например, вкладка была создана
  * вручную или осталась от старой версии).
@@ -151,7 +151,7 @@ async function ensureTabs(tabNames) {
 
   if (needsHeader.length > 0) {
     const headerData = needsHeader.map((title) => ({
-      range: `'${title}'!A1:U1`,
+      range: `'${title}'!A1:X1`,
       values: [HEADER_ROW],
     }));
     await sheets.spreadsheets.values.batchUpdate({
