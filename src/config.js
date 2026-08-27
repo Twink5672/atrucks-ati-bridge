@@ -72,15 +72,6 @@ module.exports = {
     relaySecret: process.env.EXPRESS_RELAY_SECRET || '',
   },
 
-  // --- MAX (мессенджер) ---
-  // Уведомления о новых рейсах Газпромнефть-Снабжение + Трал.
-  // Токен — через @MasterBot в MAX (/create). chat_id — см. README
-  // (GET /updates после добавления бота в нужный чат).
-  max: {
-    botToken: process.env.MAX_BOT_TOKEN || '',
-    chatId: process.env.MAX_CHAT_ID || '',
-  },
-
   // --- ATI.SU ---
   ati: {
     apiBase: 'https://api.ati.su',
