@@ -19,19 +19,38 @@ const db = require('./db');
 const sheets = require('./sheetsClient');
 const config = require('./config');
 const { mapOrderToAtiBody, EXT_ID_PREFIX } = require('./expressMapper');
+const maxNotifier = require('./maxNotifier');
 
 const FALLBACK_TAB = process.env.FALLBACK_TAB_NAME || 'Без логиста';
 // Спецправило: рейсы клиента ООО "Газпромнефть-Снабжение" с типом
 // кузова "Трал" всегда идут на этот отдельный лист — вместо обычной
 // вкладки логиста (не по справочнику "Логисты").
 const GPNS_TRAL_TAB = 'Газпромнефть-Снабжение Трал';
+const GPNS_PLOSHADKA_BORT_TAB = 'Газпромнефть-Снабжение Площадки/Борта';
+const GPNS_MELKOTONNAZHKA_TAB = 'Газпромнефть-Снабжение мелкотоннажка';
 const GPNS_TRAL_ARCHIVE_SHEET = 'Архив ГПН Трал';
 const GPNS_CLIENT_MARKER = 'Газпромнефть-Снабжение';
+// Порог для правила "мелкотоннажка" — объём меньше этого числа (м³).
+const GPNS_MELKOTONNAZHKA_VOLUME_THRESHOLD = 80;
 
-function resolveTargetTab(clientName, bodyTypeText, logistEntry) {
-  const isGpnsTral =
-    clientName.includes(GPNS_CLIENT_MARKER) && /трал/i.test(bodyTypeText || '');
-  if (isGpnsTral) return GPNS_TRAL_TAB;
+/**
+ * Спецмаршрутизация для клиента ООО "Газпромнефть-Снабжение" — вместо
+ * обычной вкладки логиста. Приоритет правил (первое совпавшее и
+ * побеждает): Трал > Площадка/Борта > Мелкотоннажка (объём < 80) >
+ * обычная вкладка логиста.
+ */
+function resolveTargetTab(clientName, bodyTypeText, volume, logistEntry) {
+  if (clientName.includes(GPNS_CLIENT_MARKER)) {
+    const bt = bodyTypeText || '';
+    if (/трал/i.test(bt)) return GPNS_TRAL_TAB;
+    if (/площадка|бортовой/i.test(bt)) return GPNS_PLOSHADKA_BORT_TAB;
+
+    const numericVolume =
+      typeof volume === 'number' ? volume : parseFloat(String(volume ?? '').replace(',', '.'));
+    if (Number.isFinite(numericVolume) && numericVolume < GPNS_MELKOTONNAZHKA_VOLUME_THRESHOLD) {
+      return GPNS_MELKOTONNAZHKA_TAB;
+    }
+  }
   return logistEntry && logistEntry.logistName ? logistEntry.logistName : FALLBACK_TAB;
 }
 
@@ -60,7 +79,12 @@ async function syncExpressOnce() {
     return { error: err.message };
   }
 
-  const requiredTabs = new Set([FALLBACK_TAB, GPNS_TRAL_TAB]);
+  const requiredTabs = new Set([
+    FALLBACK_TAB,
+    GPNS_TRAL_TAB,
+    GPNS_PLOSHADKA_BORT_TAB,
+    GPNS_MELKOTONNAZHKA_TAB,
+  ]);
   for (const entry of logistsMap.values()) {
     if (entry.logistName) requiredTabs.add(entry.logistName);
   }
@@ -93,6 +117,7 @@ async function syncExpressOnce() {
 
   const seenExtIds = [];
   const toWrite = [];
+  const newGpnsTralLots = [];
   const rowsToDelete = [];
   const nextRowByTab = new Map(
     requiredTabsList.map((t) => [t, (lotsIndex.lastRowByTab.get(t) || 1) + 1])
@@ -144,6 +169,7 @@ async function syncExpressOnce() {
     const targetTab = resolveTargetTab(
       mapped.meta.clientName,
       mapped.meta.display.bodyTypeText,
+      mapped.meta.display.volume,
       logistEntry
     );
     const sameTabAsTarget = sameTabAsBefore && existingEntry.tabName === targetTab;
@@ -173,6 +199,17 @@ async function syncExpressOnce() {
         payment.rate_without_vat = carrierRateNoVat;
         payment.rate_with_vat = carrierRateWithVat;
       }
+    }
+
+    // Уведомление в MAX: только для реально НОВЫХ рейсов (этого ext_id
+    // раньше не было в таблице вообще) на вкладке "Газпромнефть-
+    // Снабжение Трал" — не для обновлений уже существующих строк.
+    if (!existingEntry && targetTab === GPNS_TRAL_TAB) {
+      newGpnsTralLots.push({
+        internalNumber: mapped.meta.display.internalNumber,
+        from: mapped.meta.display.from,
+        to: mapped.meta.display.to,
+      });
     }
 
     toWrite.push({
@@ -218,6 +255,20 @@ async function syncExpressOnce() {
     } catch (err) {
       stats.errors += 1;
       log(`ОШИБКА записи в Google Sheets: ${err.message}`);
+    }
+  }
+
+  if (newGpnsTralLots.length > 0) {
+    for (const lot of newGpnsTralLots) {
+      try {
+        const result = await maxNotifier.notifyNewGpnsTralLot(lot);
+        if (result && result.skipped) {
+          log(`MAX уведомление пропущено (${result.reason}) для рейса №${lot.internalNumber}`);
+        }
+      } catch (err) {
+        stats.errors += 1;
+        log(`ОШИБКА отправки уведомления в MAX для рейса №${lot.internalNumber}: ${err.message}`);
+      }
     }
   }
 
