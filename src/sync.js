@@ -125,6 +125,18 @@ async function syncOnce() {
     return { error: err.message };
   }
 
+  if (lotsIndex.duplicateRows.length > 0) {
+    log(
+      `ВНИМАНИЕ: найдено дублей ext_id на листах: ${lotsIndex.duplicateRows.length} — ` +
+        `очищаю лишние копии (последняя копия каждого лота остаётся).`
+    );
+    try {
+      await sheets.clearRows(lotsIndex.duplicateRows);
+    } catch (err) {
+      log(`ОШИБКА очистки дублей: ${err.message}`);
+    }
+  }
+
   const stats = {
     total: lots.length,
     written: 0,
