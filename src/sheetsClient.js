@@ -190,11 +190,17 @@ async function readAllLotsIndex(tabNames) {
   const sheets = getSheetsApi();
   const { spreadsheetId } = config.googleSheets;
 
-  const ranges = tabNames.map((name) => `'${name}'!A2:U`);
+  const ranges = tabNames.map((name) => `'${name}'!A2:X`);
   const res = await sheets.spreadsheets.values.batchGet({ spreadsheetId, ranges });
 
   const byExtId = new Map();
   const lastRowByTab = new Map(tabNames.map((name) => [name, 1]));
+  // Защита от дублей: если один и тот же ext_id встречается в
+  // нескольких строках (обычно след старого сбоя синхронизации),
+  // вторую и последующие копии собираем сюда — их данные не участвуют
+  // в индексе (последняя встреченная копия побеждает, как и раньше),
+  // а сами строки затем безопасно очищаются вызывающим кодом.
+  const duplicateRows = [];
 
   (res.data.valueRanges || []).forEach((valueRange, tabIdx) => {
     const tabName = tabNames[tabIdx];
@@ -204,7 +210,12 @@ async function readAllLotsIndex(tabNames) {
       const extId = row[IDX.EXT_ID];
       if (!extId) return;
       const rowNumber = idx + 2;
-      byExtId.set(String(extId), {
+      const key = String(extId);
+      if (byExtId.has(key)) {
+        const previous = byExtId.get(key);
+        duplicateRows.push({ tabName: previous.tabName, rowNumber: previous.rowNumber });
+      }
+      byExtId.set(key, {
         tabName,
         rowNumber,
         clientName: row[IDX.CLIENT] || '',
@@ -214,7 +225,7 @@ async function readAllLotsIndex(tabNames) {
     });
   });
 
-  return { byExtId, lastRowByTab };
+  return { byExtId, lastRowByTab, duplicateRows };
 }
 
 /**
@@ -386,6 +397,32 @@ async function writeLots(lots) {
 }
 
 /**
+ * Безопасно очищает содержимое указанных строк, НЕ удаляя сами строки
+ * (то есть без сдвига номеров строк ниже) — используется для дублей
+ * ext_id (см. readAllLotsIndex), чтобы не пересчитывать номера строк
+ * в середине уже идущего цикла. Колонку D не трогает — там формула
+ * ARRAYFORMULA подбора логиста, растянутая с D2 на весь столбец;
+ * попытка очистить отдельную "вылившуюся" ячейку сломала бы её.
+ * @param {Array<{tabName: string, rowNumber: number}>} rows
+ */
+async function clearRows(rows) {
+  if (rows.length === 0) return;
+
+  const sheets = getSheetsApi();
+  const { spreadsheetId } = config.googleSheets;
+
+  const ranges = rows.flatMap(({ tabName, rowNumber }) => [
+    `'${tabName}'!A${rowNumber}:C${rowNumber}`,
+    `'${tabName}'!E${rowNumber}:X${rowNumber}`,
+  ]);
+
+  await sheets.spreadsheets.values.batchClear({
+    spreadsheetId,
+    requestBody: { ranges },
+  });
+}
+
+/**
  * Удаляет указанные строки (лоты, пропавшие с Atrucks, либо переехавшие
  * на другую вкладку логиста — старая строка тоже удаляется).
  * @param {Array<{tabName: string, rowNumber: number}>} deletions
@@ -546,6 +583,7 @@ module.exports = {
   readTabMarginsMap,
   writeLots,
   deleteLotRows,
+  clearRows,
   appendArchiveRows,
   readRowValues,
 };
