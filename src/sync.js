@@ -87,6 +87,17 @@ async function syncOnce() {
     return { error: err.message };
   }
 
+  // Коэффициент по конкретной целевой вкладке — имеет приоритет над
+  // настройкой по клиенту (колонка E листа "Логисты"), если для этой
+  // вкладки задано значение в листе "Маржа по листам".
+  let tabMarginsMap;
+  try {
+    tabMarginsMap = await sheets.readTabMarginsMap();
+  } catch (err) {
+    log(`ОШИБКА чтения листа "Маржа по листам": ${err.message}`);
+    tabMarginsMap = new Map();
+  }
+
   // Набор нужных вкладок: уникальные логисты из справочника + корзина
   const requiredTabs = new Set([
     FALLBACK_TAB,
@@ -193,10 +204,12 @@ async function syncOnce() {
     );
     const sameTabAsBefore = Boolean(existingEntry) && existingEntry.tabName === targetTab;
 
-    // Пересчёт ставки перевозчика и маржи с учётом индивидуального
-    // коэффициента логиста (колонка E листа "Логисты"). Если коэффициент
-    // совпадает с глобальным дефолтом — пересчёт ничего не меняет.
-    const pricingFactor = logistEntry ? logistEntry.pricingFactor : config.pricing.factor;
+    // Пересчёт ставки перевозчика и маржи с учётом коэффициента.
+    // Приоритет: лист "Маржа по листам" (по конкретной targetTab) >
+    // колонка E листа "Логисты" (по клиенту) > глобальный дефолт.
+    const pricingFactor =
+      tabMarginsMap.get(targetTab) ??
+      (logistEntry ? logistEntry.pricingFactor : config.pricing.factor);
     const clientRateNoVat = mapped.meta.display.clientRateNoVat;
     const vatRate = config.pricing.vatDivider;
     let { carrierRateNoVat, carrierRateWithVat, margin } = mapped.meta.display;
