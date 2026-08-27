@@ -27,6 +27,7 @@ const sheets = require('./sheetsClient');
 const config = require('./config');
 const { mapLotToAtiBody } = require('./mapper');
 const { resolveCompanyName } = require('./companyNames');
+const maxNotifier = require('./maxNotifier');
 
 const PILOT_LOGIST_NAME = process.env.PILOT_LOGIST_NAME || null;
 const FALLBACK_TAB = process.env.FALLBACK_TAB_NAME || 'Без логиста';
@@ -34,12 +35,28 @@ const FALLBACK_TAB = process.env.FALLBACK_TAB_NAME || 'Без логиста';
 // кузова "Трал" всегда идут на этот отдельный лист — вместо обычной
 // вкладки логиста (не по справочнику "Логисты").
 const GPNS_TRAL_TAB = 'Газпромнефть-Снабжение Трал';
+const GPNS_PLOSHADKA_BORT_TAB = 'Газпромнефть-Снабжение Площадки/Борта';
+const GPNS_MELKOTONNAZHKA_TAB = 'Газпромнефть-Снабжение мелкотоннажка';
 const GPNS_CLIENT_MARKER = 'Газпромнефть-Снабжение';
+const GPNS_MELKOTONNAZHKA_VOLUME_THRESHOLD = 80;
 
-function resolveTargetTab(clientName, bodyTypeText, logistEntry) {
-  const isGpnsTral =
-    clientName.includes(GPNS_CLIENT_MARKER) && /трал/i.test(bodyTypeText || '');
-  if (isGpnsTral) return GPNS_TRAL_TAB;
+/**
+ * Спецмаршрутизация для клиента ООО "Газпромнефть-Снабжение" — вместо
+ * обычной вкладки логиста. Приоритет правил: Трал > Площадка/Борта >
+ * Мелкотоннажка (объём < 80) > обычная вкладка логиста.
+ */
+function resolveTargetTab(clientName, bodyTypeText, volume, logistEntry) {
+  if (clientName.includes(GPNS_CLIENT_MARKER)) {
+    const bt = bodyTypeText || '';
+    if (/трал/i.test(bt)) return GPNS_TRAL_TAB;
+    if (/площадка|бортовой/i.test(bt)) return GPNS_PLOSHADKA_BORT_TAB;
+
+    const numericVolume =
+      typeof volume === 'number' ? volume : parseFloat(String(volume ?? '').replace(',', '.'));
+    if (Number.isFinite(numericVolume) && numericVolume < GPNS_MELKOTONNAZHKA_VOLUME_THRESHOLD) {
+      return GPNS_MELKOTONNAZHKA_TAB;
+    }
+  }
   return logistEntry && logistEntry.logistName ? logistEntry.logistName : FALLBACK_TAB;
 }
 
@@ -72,7 +89,12 @@ async function syncOnce() {
   }
 
   // Набор нужных вкладок: уникальные логисты из справочника + корзина
-  const requiredTabs = new Set([FALLBACK_TAB, GPNS_TRAL_TAB]);
+  const requiredTabs = new Set([
+    FALLBACK_TAB,
+    GPNS_TRAL_TAB,
+    GPNS_PLOSHADKA_BORT_TAB,
+    GPNS_MELKOTONNAZHKA_TAB,
+  ]);
   for (const entry of logistsMap.values()) {
     if (entry.logistName) requiredTabs.add(entry.logistName);
   }
@@ -108,6 +130,7 @@ async function syncOnce() {
   const toWrite = [];
   const rowsToDelete = [];
   const mappingErrors = [];
+  const newGpnsTralLots = [];
   const nextRowByTab = new Map(
     requiredTabsList.map((t) => [t, (lotsIndex.lastRowByTab.get(t) || 1) + 1])
   );
@@ -164,7 +187,12 @@ async function syncOnce() {
       continue;
     }
 
-    const targetTab = resolveTargetTab(clientName, mapped.meta.display.bodyTypeText, logistEntry);
+    const targetTab = resolveTargetTab(
+      clientName,
+      mapped.meta.display.bodyTypeText,
+      mapped.meta.display.volume,
+      logistEntry
+    );
     const sameTabAsBefore = Boolean(existingEntry) && existingEntry.tabName === targetTab;
 
     // Пересчёт ставки перевозчика и маржи с учётом индивидуального
@@ -195,6 +223,17 @@ async function syncOnce() {
     const row = sameTabAsBefore ? existingEntry.rowNumber : nextRowByTab.get(targetTab);
     if (!sameTabAsBefore) {
       nextRowByTab.set(targetTab, row + 1);
+    }
+
+    // Уведомление в MAX: только для реально НОВЫХ рейсов (этого ext_id
+    // раньше не было в таблице вообще) на вкладке "Газпромнефть-
+    // Снабжение Трал".
+    if (!existingEntry && targetTab === GPNS_TRAL_TAB) {
+      newGpnsTralLots.push({
+        internalNumber: mapped.meta.display.internalNumber,
+        from: mapped.meta.display.from,
+        to: mapped.meta.display.to,
+      });
     }
 
     toWrite.push({
@@ -240,6 +279,20 @@ async function syncOnce() {
     } catch (err) {
       stats.errors += 1;
       log(`ОШИБКА записи в Google Sheets: ${err.message}`);
+    }
+  }
+
+  if (newGpnsTralLots.length > 0) {
+    for (const lot of newGpnsTralLots) {
+      try {
+        const result = await maxNotifier.notifyNewGpnsTralLot(lot);
+        if (result && result.skipped) {
+          log(`MAX уведомление пропущено (${result.reason}) для рейса №${lot.internalNumber}`);
+        }
+      } catch (err) {
+        stats.errors += 1;
+        log(`ОШИБКА отправки уведомления в MAX для рейса №${lot.internalNumber}: ${err.message}`);
+      }
     }
   }
 
