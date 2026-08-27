@@ -30,7 +30,7 @@ const GPNS_MELKOTONNAZHKA_TAB = 'Газпромнефть-Снабжение м�
 const GPNS_TRAL_ARCHIVE_SHEET = 'Архив ГПН Трал';
 const GPNS_CLIENT_MARKER = 'Газпромнефть-Снабжение';
 // Порог для правила "мелкотоннажка" — объём меньше этого числа (м³).
-const GPNS_MELKOTONNAZHKA_VOLUME_THRESHOLD = 80;
+const GPNS_MELKOTONNAZHKA_VOLUME_THRESHOLD = 75;
 
 /**
  * Спецмаршрутизация для клиента ООО "Газпромнефть-Снабжение" — вместо
