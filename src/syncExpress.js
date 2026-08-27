@@ -27,7 +27,7 @@ const FALLBACK_TAB = process.env.FALLBACK_TAB_NAME || 'Без логиста';
 const GPNS_TRAL_TAB = 'Газпромнефть-Снабжение Трал';
 const GPNS_PLOSHADKA_BORT_TAB = 'Газпромнефть-Снабжение Площадки/Борта';
 const GPNS_MELKOTONNAZHKA_TAB = 'Газпромнефть-Снабжение мелкотоннажка';
-const GPNS_TRAL_ARCHIVE_SHEET = 'Архив ГПН Трал';
+const ARCHIVE_SHEET_NAME = 'Архив';
 const GPNS_CLIENT_MARKER = 'Газпромнефть-Снабжение';
 // Порог для правила "мелкотоннажка" — объём меньше этого числа (м³).
 const GPNS_MELKOTONNAZHKA_VOLUME_THRESHOLD = 75;
@@ -273,45 +273,43 @@ async function syncExpressOnce() {
   for (const [extId, entry] of staleEntries) {
     rowsToDelete.push({ tabName: entry.tabName, rowNumber: entry.rowNumber });
 
-    // Статистика: перед удалением строки с вкладки "Газпромнефть-
-    // Снабжение Трал" сохраняем её снимок в лист-архив навсегда —
-    // направление, конкурент, его ставка, наша ставка, итог.
-    if (entry.tabName === GPNS_TRAL_TAB) {
-      try {
-        const row = await sheets.readRowValues(entry.tabName, entry.rowNumber);
-        // Индексы по раскладке A..X (0-based):
-        // 0 статус, 1 внутр.номер, 2 клиент, 3 логист, 4 откуда, 5 дата погрузки,
-        // 6 куда, 7 дата выгрузки, 8 торги до, 9 конкурент, 10 ставка конкурента,
-        // 11 груз, 12 вес, 13 объём, 14 тип кузова, 15 ставка клиента без НДС,
-        // 16 ставка клиента с НДС, 17 ставка перевозчика без НДС,
-        // 18 ставка перевозчика с НДС, 19 маржа, 20 ATI_cargo_id, 21 body_json,
-        // 22 обновлено, 23 ext_id
-        const outcome = entry.atiCargoId ? 'Опубликовано на ATI' : 'Торги закрыты (не публиковали)';
-        archiveRows.push([
-          new Date().toISOString(),
-          outcome,
-          row[1] || '',
-          row[4] || '',
-          row[6] || '',
-          row[5] || '',
-          row[7] || '',
-          row[9] || '',
-          row[10] || '',
-          row[11] || '',
-          row[12] || '',
-          row[13] || '',
-          row[14] || '',
-          row[15] || '',
-          row[16] || '',
-          row[17] || '',
-          row[18] || '',
-          row[19] || '',
-          row[20] || '',
-          extId,
-        ]);
-      } catch (err) {
-        log(`ОШИБКА чтения строки для архивации ext_id=${extId}: ${err.message}`);
-      }
+    // Статистика: перед удалением строки сохраняем её снимок в общий
+    // лист-архив навсегда — направление, конкурент-победитель (по
+    // последней известной ставке), его ставка, наши ставки, итог.
+    try {
+      const row = await sheets.readRowValues(entry.tabName, entry.rowNumber);
+      // Индексы по раскладке A..X (0-based):
+      // 0 статус, 1 внутр.номер, 2 клиент, 3 логист, 4 откуда, 5 дата погрузки,
+      // 6 куда, 7 дата выгрузки, 8 торги до, 9 конкурент, 10 ставка конкурента,
+      // 11 груз, 12 вес, 13 объём, 14 тип кузова, 15 ставка клиента без НДС,
+      // 16 ставка клиента с НДС, 17 ставка перевозчика без НДС,
+      // 18 ставка перевозчика с НДС, 19 маржа, 20 ATI_cargo_id, 21 body_json,
+      // 22 обновлено, 23 ext_id
+      const outcome = entry.atiCargoId ? 'Опубликовано на ATI' : 'Торги закрыты (не публиковали)';
+      archiveRows.push([
+        new Date().toISOString(),
+        outcome,
+        row[1] || '',
+        row[4] || '',
+        row[6] || '',
+        row[5] || '',
+        row[7] || '',
+        row[9] || '',
+        row[10] || '',
+        row[11] || '',
+        row[12] || '',
+        row[13] || '',
+        row[14] || '',
+        row[15] || '',
+        row[16] || '',
+        row[17] || '',
+        row[18] || '',
+        row[19] || '',
+        row[20] || '',
+        extId,
+      ]);
+    } catch (err) {
+      log(`ОШИБКА чтения строки для архивации ext_id=${extId}: ${err.message}`);
     }
 
     if (entry.atiCargoId) {
@@ -342,11 +340,11 @@ async function syncExpressOnce() {
 
   if (archiveRows.length > 0) {
     try {
-      await sheets.appendArchiveRows(GPNS_TRAL_ARCHIVE_SHEET, archiveRows);
+      await sheets.appendArchiveRows(ARCHIVE_SHEET_NAME, archiveRows);
       log(`Заархивировано закрытых тендеров (Газпромнефть-Снабжение + Трал): ${archiveRows.length}`);
     } catch (err) {
       stats.errors += 1;
-      log(`ОШИБКА записи в архив "${GPNS_TRAL_ARCHIVE_SHEET}": ${err.message}`);
+      log(`ОШИБКА записи в архив "${ARCHIVE_SHEET_NAME}": ${err.message}`);
     }
   }
 
