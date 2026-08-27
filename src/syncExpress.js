@@ -19,7 +19,6 @@ const db = require('./db');
 const sheets = require('./sheetsClient');
 const config = require('./config');
 const { mapOrderToAtiBody, EXT_ID_PREFIX } = require('./expressMapper');
-const maxNotifier = require('./maxNotifier');
 
 const FALLBACK_TAB = process.env.FALLBACK_TAB_NAME || 'Без логиста';
 // Спецправило: рейсы клиента ООО "Газпромнефть-Снабжение" с типом
@@ -117,7 +116,6 @@ async function syncExpressOnce() {
 
   const seenExtIds = [];
   const toWrite = [];
-  const newGpnsTralLots = [];
   const rowsToDelete = [];
   const nextRowByTab = new Map(
     requiredTabsList.map((t) => [t, (lotsIndex.lastRowByTab.get(t) || 1) + 1])
@@ -201,17 +199,6 @@ async function syncExpressOnce() {
       }
     }
 
-    // Уведомление в MAX: только для реально НОВЫХ рейсов (этого ext_id
-    // раньше не было в таблице вообще) на вкладке "Газпромнефть-
-    // Снабжение Трал" — не для обновлений уже существующих строк.
-    if (!existingEntry && targetTab === GPNS_TRAL_TAB) {
-      newGpnsTralLots.push({
-        internalNumber: mapped.meta.display.internalNumber,
-        from: mapped.meta.display.from,
-        to: mapped.meta.display.to,
-      });
-    }
-
     toWrite.push({
       tabName: targetTab,
       row,
@@ -255,20 +242,6 @@ async function syncExpressOnce() {
     } catch (err) {
       stats.errors += 1;
       log(`ОШИБКА записи в Google Sheets: ${err.message}`);
-    }
-  }
-
-  if (newGpnsTralLots.length > 0) {
-    for (const lot of newGpnsTralLots) {
-      try {
-        const result = await maxNotifier.notifyNewGpnsTralLot(lot);
-        if (result && result.skipped) {
-          log(`MAX уведомление пропущено (${result.reason}) для рейса №${lot.internalNumber}`);
-        }
-      } catch (err) {
-        stats.errors += 1;
-        log(`ОШИБКА отправки уведомления в MAX для рейса №${lot.internalNumber}: ${err.message}`);
-      }
     }
   }
 
