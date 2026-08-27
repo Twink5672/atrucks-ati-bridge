@@ -218,6 +218,17 @@ async function readAllLotsIndex(tabNames) {
 }
 
 /**
+ * Парсит коэффициент ставки перевозчика из ячейки (например "0,65"
+ * или "0.65" = маржа 35%). Возвращает null, если ячейка пустая или
+ * значение вне допустимого диапазона (0; 1].
+ */
+function parsePricingCoefficient(raw) {
+  const rawCoeff = raw ? String(raw).trim().replace(',', '.') : '';
+  const parsed = rawCoeff ? parseFloat(rawCoeff) : NaN;
+  return !Number.isNaN(parsed) && parsed > 0 && parsed <= 1 ? parsed : null;
+}
+
+/**
  * Читает справочник "Логисты".
  * @returns {Promise<Map<string, {logistName:string, token:string, contactId:string}>>}
  */
@@ -236,20 +247,62 @@ async function readLogistsMap() {
   rows.forEach((row) => {
     const clientName = (row[0] || '').trim();
     if (!clientName) return;
-    // Колонка E — индивидуальный коэффициент ставки перевозчика
-    // (например, 0.95 = скидка 5%, 0.85 = скидка 15%).
-    // Если не задана или не число — используется дефолт из config.
-    const rawCoeff = row[4] ? String(row[4]).trim().replace(',', '.') : '';
-    const parsedCoeff = rawCoeff ? parseFloat(rawCoeff) : NaN;
-    const pricingFactor = !Number.isNaN(parsedCoeff) && parsedCoeff > 0 && parsedCoeff <= 1
-      ? parsedCoeff
-      : config.pricing.factor;
+    // Колонка E — индивидуальный коэффициент ставки перевозчика по
+    // клиенту (например, 0.95 = скидка 5%, 0.85 = скидка 15%). Если не
+    // задана или не число — используется дефолт из config. Имейте в
+    // виду: лист "Маржа по листам" (readTabMarginsMap) имеет приоритет
+    // над этим значением, если для целевой вкладки задан свой коэффициент.
+    const pricingFactor = parsePricingCoefficient(row[4]) ?? config.pricing.factor;
     map.set(clientName, {
       logistName: (row[1] || '').trim(),
       token: row[2] || '',
       contactId: row[3] || '',
       pricingFactor,
     });
+  });
+
+  return map;
+}
+
+const TAB_MARGINS_SHEET_NAME = 'Маржа по листам';
+const TAB_MARGINS_RANGE = (sheet) => `'${sheet}'!A2:B`;
+
+/**
+ * Читает лист "Маржа по листам" — коэффициент ставки перевозчика,
+ * заданный НЕ по клиенту, а по конкретной целевой вкладке (название
+ * вкладки логиста или спецвкладки вроде "Газпромнефть-Снабжение Трал").
+ * Имеет приоритет над колонкой E листа "Логисты" (per-client), когда
+ * для этой вкладки явно задано значение.
+ *
+ * Формат листа: колонка A — точное название вкладки, колонка B —
+ * коэффициент (0.65 = маржа 35%), одна строка на вкладку.
+ *
+ * Если лист ещё не создан — это нормально, просто нет спецнастроек по
+ * вкладкам, возвращается пустая карта (без ошибки).
+ * @returns {Promise<Map<string, number>>} название вкладки -> коэффициент
+ */
+async function readTabMarginsMap() {
+  const sheets = getSheetsApi();
+  const { spreadsheetId } = config.googleSheets;
+
+  let res;
+  try {
+    res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: TAB_MARGINS_RANGE(TAB_MARGINS_SHEET_NAME),
+    });
+  } catch (err) {
+    return new Map();
+  }
+
+  const rows = res.data.values || [];
+  const map = new Map();
+
+  rows.forEach((row) => {
+    const tabName = (row[0] || '').trim();
+    if (!tabName) return;
+    const factor = parsePricingCoefficient(row[1]);
+    if (factor != null) map.set(tabName, factor);
   });
 
   return map;
@@ -490,6 +543,7 @@ module.exports = {
   ensureTabs,
   readAllLotsIndex,
   readLogistsMap,
+  readTabMarginsMap,
   writeLots,
   deleteLotRows,
   appendArchiveRows,
