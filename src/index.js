@@ -7,6 +7,11 @@ const config = require('./config');
 const { syncOnce } = require('./sync');
 const { syncExpressOnce } = require('./syncExpress');
 
+// Позволяет полностью выключить цикл Atrucks без изменения кода —
+// достаточно задать ATRUCKS_SYNC_ENABLED=false в Railway. По умолчанию
+// включён. Express продолжает работать независимо от этого флага.
+const ATRUCKS_SYNC_ENABLED = process.env.ATRUCKS_SYNC_ENABLED !== 'false';
+
 let isRunning = false;
 let lastResult = null;
 let lastRunAt = null;
@@ -16,6 +21,10 @@ let lastExpressResult = null;
 let lastExpressRunAt = null;
 
 async function runCycle() {
+  if (!ATRUCKS_SYNC_ENABLED) {
+    console.log('Цикл Atrucks выключен (ATRUCKS_SYNC_ENABLED=false), пропуск.');
+    return;
+  }
   if (isRunning) {
     console.log('Предыдущий цикл Atrucks ещё выполняется, пропуск.');
     return;
@@ -64,6 +73,11 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url === '/run' && req.method === 'POST') {
+    if (!ATRUCKS_SYNC_ENABLED) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'disabled', reason: 'ATRUCKS_SYNC_ENABLED=false' }));
+      return;
+    }
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'started' }));
     runCycle();
@@ -88,13 +102,17 @@ server.listen(port, () => {
 
 // Запуск сразу при старте, затем по расписанию — у каждой площадки
 // свой независимый цикл и интервал.
-runCycle();
-setInterval(runCycle, config.schedule.intervalMinutes * 60 * 1000);
+if (ATRUCKS_SYNC_ENABLED) {
+  runCycle();
+  setInterval(runCycle, config.schedule.intervalMinutes * 60 * 1000);
+} else {
+  console.log('Цикл Atrucks отключён переменной ATRUCKS_SYNC_ENABLED=false.');
+}
 
 runExpressCycle();
 setInterval(runExpressCycle, config.express.pollIntervalMinutes * 60 * 1000);
 
 console.log(
-  `Сервис запущен. Интервал Atrucks: ${config.schedule.intervalMinutes} мин., ` +
+  `Сервис запущен. Atrucks: ${ATRUCKS_SYNC_ENABLED ? `включён, интервал ${config.schedule.intervalMinutes} мин.` : 'выключен'}, ` +
     `интервал Express Isource: ${config.express.pollIntervalMinutes} мин.`
 );
