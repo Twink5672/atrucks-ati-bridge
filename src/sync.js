@@ -37,7 +37,7 @@ const GPNS_TRAL_TAB = 'Газпромнефть-Снабжение Трал';
 const GPNS_PLOSHADKA_BORT_TAB = 'Газпромнефть-Снабжение Площадки/Борта';
 const GPNS_MELKOTONNAZHKA_TAB = 'Газпромнефть-Снабжение мелкотоннажка';
 const GPNS_CLIENT_MARKER = 'Газпромнефть-Снабжение';
-const GPNS_MELKOTONNAZHKA_VOLUME_THRESHOLD = 80;
+const GPNS_MELKOTONNAZHKA_VOLUME_THRESHOLD = 75;
 
 /**
  * Спецмаршрутизация для клиента ООО "Газпромнефть-Снабжение" — вместо
