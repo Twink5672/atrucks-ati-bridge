@@ -571,6 +571,12 @@ async function readRowValues(tabName, rowNumber) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `'${tabName}'!A${rowNumber}:X${rowNumber}`,
+    // Без этого API возвращает отформатированные СТРОКИ (например,
+    // "455 000" с разделителем разрядов) вместо чисел — такие значения,
+    // записанные в архив, QUERY не может усреднить/просуммировать
+    // (ошибка AVG_SUM_ONLY_NUMERIC). UNFORMATTED_VALUE отдаёт настоящие
+    // JS-числа для числовых ячеек.
+    valueRenderOption: 'UNFORMATTED_VALUE',
   });
 
   return (res.data.values && res.data.values[0]) || [];
