@@ -72,7 +72,15 @@ module.exports = {
     relaySecret: process.env.EXPRESS_RELAY_SECRET || '',
     // Шаг снижения для автобота (лист "Автобот Express"), если в
     // конкретной заявке колонка "Шаг" оставлена пустой.
-    defaultTradeBotStep: Number(process.env.EXPRESS_TRADEBOT_DEFAULT_STEP || 1000),
+    // ВАЖНО: не использовать `process.env.X || 1000` напрямую — строка
+    // "0" истинна в JS ("0" || 1000 === "0"), поэтому если переменная
+    // случайно выставлена в "0", дефолт 1000 никогда не сработает и
+    // Express будет отклонять запрос ("Значение должно быть больше 0").
+    defaultTradeBotStep: (() => {
+      const raw = process.env.EXPRESS_TRADEBOT_DEFAULT_STEP;
+      const n = raw !== undefined && raw !== '' ? Number(raw) : NaN;
+      return Number.isFinite(n) && n > 0 ? n : 1000;
+    })(),
   },
 
   // --- ATI.SU ---
