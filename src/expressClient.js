@@ -180,4 +180,100 @@ async function enrichOrdersWithCompetitors(orders, headers, proxyAgent) {
   return orders;
 }
 
-module.exports = { fetchAllOrders };
+/**
+ * Настраивает автоторги (tradeBot) Express для конкретного тендера —
+ * "Предельно мин. цена" и "Шаг снижения". Официальный встроенный
+ * инструмент площадки (Express сам подаёт ставки в рамках заданных
+ * границ), а не обход правил торгов. Тот же принцип двух режимов
+ * (relay / напрямую), что и у fetchAllOrders.
+ * @param {number} orderId — внутренний номер тендера (== order.id)
+ * @param {number} minPrice — noVatMinPrice, предельная минимальная цена без НДС
+ * @param {number|null} step — noVatPriceStep, шаг снижения без НДС; если не
+ *   задан — берётся config.express.defaultTradeBotStep
+ */
+async function setTradeBot(orderId, minPrice, step) {
+  if (config.express.relayUrl) {
+    return setTradeBotViaRelay(orderId, minPrice, step);
+  }
+  return setTradeBotDirect(orderId, minPrice, step);
+}
+
+async function setTradeBotViaRelay(orderId, minPrice, step) {
+  const { relayUrl, relaySecret } = config.express;
+
+  const res = await fetch(`${relayUrl.replace(/\/$/, '')}/set-tradebot`, {
+    method: 'POST',
+    headers: {
+      'X-Relay-Secret': relaySecret,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ orderId, minPrice, step }),
+  }).catch((err) => {
+    throw new Error(
+      `Сетевая ошибка запроса к relay-серверу (${relayUrl}) при настройке автобота: ${err.message}${err.cause ? ` (cause: ${err.cause})` : ''}`
+    );
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Relay-сервер вернул HTTP ${res.status} при настройке автобота: ${text.slice(0, 300)}`);
+  }
+
+  const json = await res.json();
+  if (json.error) {
+    throw new Error(`Ошибка на стороне relay-сервера при настройке автобота: ${json.error}`);
+  }
+
+  return json;
+}
+
+async function setTradeBotDirect(orderId, minPrice, step) {
+  const { baseUrl, cookie, csrfToken, proxyUrl, defaultTradeBotStep } = config.express;
+
+  if (!cookie || !csrfToken) {
+    throw new Error('Не заданы EXPRESS_COOKIE / EXPRESS_CSRF_TOKEN');
+  }
+
+  const url = `${baseUrl}/api/v1/orderRequest/${orderId}/tradeBot`;
+  const body = {
+    noVatMinPrice: minPrice,
+    noVatPriceStep: step != null ? step : defaultTradeBotStep,
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: '*/*',
+      'Content-Type': 'application/json',
+      'Accept-Encoding': 'gzip, deflate, br, zstd',
+      'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+      Cookie: cookie,
+      Referer: `${baseUrl}/order/${orderId}/offers`,
+      'Sec-Ch-Ua': '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"macOS"',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+      'X-Auth-Token': csrfToken,
+    },
+    body: JSON.stringify(body),
+    ...(proxyAgent ? { dispatcher: proxyAgent } : {}),
+  }).catch((err) => {
+    const proxyNote = proxyUrl ? ' (через прокси)' : ' (без прокси)';
+    throw new Error(
+      `Сетевая ошибка настройки автобота Express${proxyNote}: ${err.message}${err.cause ? ` (cause: ${err.cause})` : ''}`
+    );
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Express Isource API HTTP ${res.status} (tradeBot): ${text.slice(0, 300)}`);
+  }
+
+  return res.json().catch(() => ({}));
+}
+
+module.exports = { fetchAllOrders, setTradeBot };
