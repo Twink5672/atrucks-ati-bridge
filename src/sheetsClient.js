@@ -633,15 +633,23 @@ async function readPendingTradeBotRequests() {
     const internalNumber = Number(internalNumberRaw);
     const minPrice = Number(String(minPriceRaw).replace(',', '.'));
     const stepRaw = row[2];
-    const step = stepRaw !== undefined && stepRaw !== '' ? Number(String(stepRaw).replace(',', '.')) : null;
+    const stepParsed = stepRaw !== undefined && stepRaw !== '' ? Number(String(stepRaw).replace(',', '.')) : null;
 
-    if (!Number.isFinite(internalNumber) || !Number.isFinite(minPrice)) return;
+    if (!Number.isFinite(internalNumber)) return;
+    // Express отклоняет 0 и отрицательные значения ("Значение должно
+    // быть больше 0") — цена без НДС обязательна и должна быть
+    // положительной, поэтому строку с некорректной ценой пропускаем
+    // (как и раньше пропускали нечисловые значения).
+    if (!Number.isFinite(minPrice) || minPrice <= 0) return;
+    // Шаг — необязательное поле; 0 или отрицательное значение
+    // трактуем как "не задано" (используется дефолт), а не как ошибку.
+    const step = Number.isFinite(stepParsed) && stepParsed > 0 ? stepParsed : null;
 
     requests.push({
       row: idx + 2,
       internalNumber,
       minPrice,
-      step: Number.isFinite(step) ? step : null,
+      step,
     });
   });
 
