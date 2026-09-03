@@ -70,6 +70,9 @@ module.exports = {
     // Общий секрет между Railway и relay-сервером — защищает relay от
     // посторонних запросов, если кто-то узнает публичный URL туннеля.
     relaySecret: process.env.EXPRESS_RELAY_SECRET || '',
+    // Шаг снижения для автобота (лист "Автобот Express"), если в
+    // конкретной заявке колонка "Шаг" оставлена пустой.
+    defaultTradeBotStep: Number(process.env.EXPRESS_TRADEBOT_DEFAULT_STEP || 1000),
   },
 
   // --- ATI.SU ---
