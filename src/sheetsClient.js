@@ -582,6 +582,88 @@ async function readRowValues(tabName, rowNumber) {
   return (res.data.values && res.data.values[0]) || [];
 }
 
+// ============================================================
+// Лист "Автобот Express" — отдельный, независимый от структуры
+// основных вкладок лист, куда пользователь вручную вписывает заявки
+// на настройку автоторгов (tradeBot) Express по конкретным тендерам.
+// Специально НЕ добавляем новые колонки в основные вкладки — история
+// уже показала, что каждое расширение колонок там приносит баги со
+// сдвигом индексов; этот лист полностью отдельный и самодостаточный.
+//
+// Структура (создаётся пользователем вручную, лист не создаётся кодом
+// автоматически — так проще контролировать, что там оказалось):
+//   A Внутренний номер (тот же ID, что в колонке B основных вкладок)
+//   B Мин. цена без НДС
+//   C Шаг снижения без НДС (необязательно, дефолт из config)
+//   D Статус — пишет сервис после обработки
+// ============================================================
+
+const TRADEBOT_SHEET_NAME = 'Автобот Express';
+const TRADEBOT_RANGE = (sheet) => `'${sheet}'!A2:D`;
+
+/**
+ * Читает лист "Автобот Express" и возвращает только необработанные
+ * заявки (колонка D "Статус" пустая). Если лист ещё не создан —
+ * это нормально, просто нет заявок (пустой массив, без ошибки).
+ * @returns {Promise<Array<{row:number, internalNumber:number, minPrice:number, step:number|null}>>}
+ */
+async function readPendingTradeBotRequests() {
+  const sheets = getSheetsApi();
+  const { spreadsheetId } = config.googleSheets;
+
+  let res;
+  try {
+    res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: TRADEBOT_RANGE(TRADEBOT_SHEET_NAME),
+    });
+  } catch (err) {
+    return [];
+  }
+
+  const rows = res.data.values || [];
+  const requests = [];
+
+  rows.forEach((row, idx) => {
+    const internalNumberRaw = (row[0] || '').toString().trim();
+    const minPriceRaw = row[1];
+    const status = (row[3] || '').toString().trim();
+    if (!internalNumberRaw || minPriceRaw === undefined || minPriceRaw === '' || status) return;
+
+    const internalNumber = Number(internalNumberRaw);
+    const minPrice = Number(String(minPriceRaw).replace(',', '.'));
+    const stepRaw = row[2];
+    const step = stepRaw !== undefined && stepRaw !== '' ? Number(String(stepRaw).replace(',', '.')) : null;
+
+    if (!Number.isFinite(internalNumber) || !Number.isFinite(minPrice)) return;
+
+    requests.push({
+      row: idx + 2,
+      internalNumber,
+      minPrice,
+      step: Number.isFinite(step) ? step : null,
+    });
+  });
+
+  return requests;
+}
+
+/**
+ * Пишет статус обработки заявки в колонку D листа "Автобот Express"
+ * для конкретной строки (успех или текст ошибки).
+ */
+async function writeTradeBotStatus(rowNumber, statusText) {
+  const sheets = getSheetsApi();
+  const { spreadsheetId } = config.googleSheets;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${TRADEBOT_SHEET_NAME}'!D${rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[statusText]] },
+  });
+}
+
 module.exports = {
   ensureTabs,
   readAllLotsIndex,
@@ -592,4 +674,6 @@ module.exports = {
   clearRows,
   appendArchiveRows,
   readRowValues,
+  readPendingTradeBotRequests,
+  writeTradeBotStatus,
 };
