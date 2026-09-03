@@ -23,7 +23,7 @@
 
 const http = require('http');
 const config = require('./config');
-const { fetchAllOrders } = require('./expressClient');
+const { fetchAllOrders, setTradeBot } = require('./expressClient');
 
 const PORT = Number(process.env.RELAY_PORT || 4000);
 const SECRET = process.env.EXPRESS_RELAY_SECRET || config.express.relaySecret;
@@ -45,6 +45,17 @@ function log(msg) {
   console.log(`[${new Date().toISOString()}] [Relay] ${msg}`);
 }
 
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', (chunk) => {
+      data += chunk;
+    });
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -52,7 +63,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.url !== '/fetch-orders') {
+  const isFetchOrders = req.url === '/fetch-orders' && req.method === 'GET';
+  const isSetTradeBot = req.url === '/set-tradebot' && req.method === 'POST';
+
+  if (!isFetchOrders && !isSetTradeBot) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'not found' }));
     return;
@@ -66,14 +80,32 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (isFetchOrders) {
+    try {
+      log('Запрос данных у Express Isource...');
+      const data = await fetchAllOrders();
+      log(`Успешно: ${data.length} тендеров`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data }));
+    } catch (err) {
+      log(`ОШИБКА: ${err.message}`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // isSetTradeBot
   try {
-    log('Запрос данных у Express Isource...');
-    const data = await fetchAllOrders();
-    log(`Успешно: ${data.length} тендеров`);
+    const bodyText = await readRequestBody(req);
+    const { orderId, minPrice, step } = JSON.parse(bodyText || '{}');
+    log(`Настройка автобота: заказ №${orderId}, мин. цена ${minPrice}, шаг ${step}`);
+    const result = await setTradeBot(orderId, minPrice, step);
+    log(`Автобот настроен для заказа №${orderId}`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ data }));
+    res.end(JSON.stringify(result));
   } catch (err) {
-    log(`ОШИБКА: ${err.message}`);
+    log(`ОШИБКА настройки автобота: ${err.message}`);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: err.message }));
   }
