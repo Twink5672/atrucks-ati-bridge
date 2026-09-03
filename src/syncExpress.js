@@ -369,6 +369,56 @@ async function syncExpressOnce() {
     }
   }
 
+  // --- Заявки на настройку автобота (лист "Автобот Express") ---
+  // Отдельный, независимый от структуры основных вкладок лист —
+  // пользователь вписывает внутренний номер тендера и минимальную
+  // цену, сервис сам настраивает официальный автобот Express через API.
+  let pendingTradeBotRequests = [];
+  try {
+    pendingTradeBotRequests = await sheets.readPendingTradeBotRequests();
+  } catch (err) {
+    log(`ОШИБКА чтения листа "Автобот Express": ${err.message}`);
+  }
+
+  if (pendingTradeBotRequests.length > 0) {
+    log(`Заявок на настройку автобота: ${pendingTradeBotRequests.length}`);
+
+    for (const request of pendingTradeBotRequests) {
+      const matchingOrder = orders.find((o) => o.id === request.internalNumber);
+
+      if (!matchingOrder) {
+        try {
+          await sheets.writeTradeBotStatus(
+            request.row,
+            `Не найден тендер №${request.internalNumber} среди активных торгов`
+          );
+        } catch (err) {
+          log(`ОШИБКА записи статуса автобота (строка ${request.row}): ${err.message}`);
+        }
+        continue;
+      }
+
+      try {
+        await express.setTradeBot(request.internalNumber, request.minPrice, request.step);
+        const stepUsed = request.step != null ? request.step : config.express.defaultTradeBotStep;
+        const timestamp = new Date().toLocaleString('ru-RU');
+        await sheets.writeTradeBotStatus(
+          request.row,
+          `Настроено: мин. ${request.minPrice}, шаг ${stepUsed} — ${timestamp}`
+        );
+        log(`Автобот настроен для заказа №${request.internalNumber}`);
+      } catch (err) {
+        stats.errors += 1;
+        log(`ОШИБКА настройки автобота для заказа №${request.internalNumber}: ${err.message}`);
+        try {
+          await sheets.writeTradeBotStatus(request.row, `Ошибка: ${err.message.slice(0, 200)}`);
+        } catch (writeErr) {
+          log(`ОШИБКА записи статуса ошибки автобота (строка ${request.row}): ${writeErr.message}`);
+        }
+      }
+    }
+  }
+
   log(
     `=== Итоги: всего=${stats.total}, записано=${stats.written}, переехало=${stats.moved}, ` +
       `без изменений=${stats.skippedNoChange}, снято с ATI=${stats.deletedFromAti}, ` +
